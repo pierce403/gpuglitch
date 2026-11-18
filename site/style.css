@@ -96,3 +96,5 @@ dialog img{display:block;width:100%;height:auto;border-radius:5px}
 .console,footer{flex-direction:column}.console-tool{width:100%}footer{align-items:start}
 }
 @media(max-width:420px){.brand{font-size:1.25rem}.brand img{width:27px;height:27px;margin-right:5px}header nav a{font-size:.82rem}.usb-link{padding:7px}.choices label{padding:.6rem}.choices img{height:87px}.choices strong{font-size:.94rem}.step-footer{padding:.85rem}}
+
+.bench-figure{margin:1rem 0;max-width:30rem}.bench-figure img{display:block;width:100%;height:auto}.bench-figure figcaption{margin-top:.55rem;font-size:.9rem;line-height:1.5;color:var(--muted)}

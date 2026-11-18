@@ -40,6 +40,8 @@
       <section id="board" class="panel">
         <p class="kicker">01 / 05 <span>•</span> Hardware</p><h3 tabindex="-1">Identify your board</h3>
         <p>Read the model printed on your Pico. Both boards use the RP2350 bootloader ID, so the printed label determines which image to install.</p>
+        <h4>What needs soldering?</h4>
+        <p>No soldering is needed for USB diagnostics or GPU inspection. Leave the Pico’s two rows of pads bare. If yours has headers installed, leave them in place with the pins disconnected. The USB cable supplies power and data.</p>
         <fieldset class="choices"><legend>Choose the board on your bench</legend>
           <label><input type="radio" name="board" value="pico2"><img src="images/pico-2.webp" width="585" height="525" alt="Pico 2 front and back, with an exposed square processor on the front."><strong>Raspberry Pi Pico 2</strong><small>Standard board</small></label>
           <label><input type="radio" name="board" value="pico2_w"><img src="images/pico-2-w.webp" width="1080" height="908" alt="Pico 2 W front and back, with a silver wireless shield on the front."><strong>Raspberry Pi Pico 2 W</strong><small>Wireless board</small></label>
@@ -48,7 +50,8 @@
       </section>
       <section id="bootsel" class="panel">
         <p class="kicker">02 / 05 <span>•</span> USB connection</p><h3 tabindex="-1">Connect in BOOTSEL</h3>
-        <ol><li>Disconnect the Pico. Leave its GPIO headers empty.</li><li>Hold down the white <b>BOOTSEL</b> button beside the USB connector. Plug the Pico directly into the host with a USB data cable, then release the button.</li><li>Look for a drive named <code>RP2350</code> containing <code>INFO_UF2.TXT</code>. Keep only the intended Pico attached during the transfer.</li></ol>
+        <figure class="bench-figure"><img src="assets/pico-connections.svg" width="400" height="225" alt="Pico 2 W viewed from above with Micro-USB on the right, BOOTSEL beside it, and both rows of header pads open."><figcaption>Pico 2 W, component side up. Compare your board with the manufacturer’s board views. <a href="https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf#page=4">Pico 2</a> · <a href="https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf#page=4">Pico 2 W</a></figcaption></figure>
+        <ol><li>Disconnect the Pico and place it on a nonconductive surface with the component side up. Locate the Micro-USB socket and BOOTSEL button.</li><li>Hold down the white <b>BOOTSEL</b> button beside the USB connector. Plug the Pico directly into the host with a USB data cable, then release the button.</li><li>Look for a drive named <code>RP2350</code> containing <code>INFO_UF2.TXT</code>. Keep only the intended Pico attached during the transfer.</li></ol>
         <div class="tool"><h4>Read the bootloader identity</h4><p>The USB picker can record the chip serial for comparison after reboot. Select the RP2350 in the picker.</p><button type="button" class="button dark" data-read="rom">Connect bootloader</button><p class="result" id="rom-result" role="status">Waiting for a bootloader.</p></div>
         <details><summary>No USB picker or mounted volume?</summary><p>Use desktop Chrome or Edge on HTTPS or localhost for WebUSB. The file-copy method also works without a picker. On Ubuntu, open RP2350 in Files or run <code>lsusb -d 2e8a:000f</code>. If neither finds it, retry BOOTSEL with a known data cable.</p></details>
       </section>
@@ -69,6 +72,7 @@
       <section id="card" class="panel">
         <p class="kicker">05 / 05 <span>•</span> GPU inventory</p><h3 tabindex="-1">Inspect your card</h3>
         <p>On the Ubuntu host with the CMP 170HX installed and cooled, record its identity before any changes. This toolkit reads the GPU through PCIe. Its firmware images target the Pico only.</p>
+        <h4>Check the card connection</h4><p>The card communicates with the host through its PCIe edge connector. Leave the GPU PCB and heatsink intact, with the Pico connected only to host USB. If you need to seat the card or connect its specified auxiliary power, shut down and disconnect host power first. Provide airflow through the passive heatsink before powering up.</p>
         <h4>Install the host tool</h4><p>Download the <a href="downloads/ga100ctl-0.1.0-py3-none-any.whl" download>ga100ctl 0.1.0 wheel</a>. In its download directory, run these commands with Python 3.10 or newer.</p>
         <pre><code>python3 -m venv .venv
 . .venv/bin/activate
@@ -89,7 +93,7 @@ ga100ctl --json report --card CARD_ID &gt; baseline.json</code></pre>
 </section>
 </main>
 <dialog id="diagram"><div class="dialog-head"><h2>Connection diagram</h2><button type="button" id="close-diagram" aria-label="Close connection diagram">×</button></div>
-  <p>The host has two independent connections. Leave all Pico GPIO pins open.</p>
+  <p>Follow the two paths from the host. A USB data cable powers the Pico and carries its diagnostic identity. The motherboard PCIe slot carries GPU traffic. Leave the Pico headers open and the GPU solder pads untouched.</p>
   <img src="assets/connections.svg" width="560" height="220" alt="The Ubuntu host connects to the Pico with a USB data cable and to the CMP 170HX through a PCIe slot. There is no connection between the Pico and the card.">
 </dialog>
 <footer class="wrap"><span>GPUglitch / Bench guide</span><div><a href="downloads/ga100ctl-license.txt">Software license</a><a href="downloads/pico-sdk.txt">Pico SDK</a><a href="downloads/tinyusb.txt">TinyUSB</a></div></footer>

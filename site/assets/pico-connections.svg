@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 225" width="400" height="225" role="img" aria-labelledby="title desc">
+  <title id="title">Pico 2 W diagnostic connections, component side up</title>
+  <desc id="desc">With the micro-USB socket on the right, BOOTSEL is just to its left and above it. Both long rows of header pads stay open.</desc>
+  <rect width="400" height="225" rx="5" fill="#222b25"/>
+  <g stroke-linejoin="round">
+    <rect x="36" y="63" width="254" height="105" rx="5" fill="#466951" stroke="#b5c6ae"/>
+    <path d="M43 69h239M43 162h239" stroke="#dfba83" stroke-width="6" stroke-dasharray="6 6"/>
+    <rect x="67" y="88" width="62" height="53" rx="2" fill="#b0bcb4"/>
+    <rect x="157" y="100" width="34" height="34" rx="2" fill="#24312b"/>
+    <rect x="213" y="91" width="20" height="12" rx="4" fill="#f8f6e9"/>
+    <rect x="270" y="99" width="26" height="34" rx="3" fill="#c1c9c1" stroke="#334236"/>
+    <path d="M299 116h61" stroke="#b6bbad" stroke-width="8"/>
+    <rect x="300" y="105" width="24" height="22" rx="3" fill="#768479"/>
+  </g>
+  <g fill="none" stroke="#ffab7e" stroke-width="1.5">
+    <path d="M223 91V44h-37M312 104V62h16M81 163v27h24"/>
+  </g>
+  <g font-family="Arial, sans-serif" font-size="16" fill="#f6f8ef">
+    <text x="41" y="46">BOOTSEL button</text>
+    <text x="285" y="51">Micro-USB</text>
+    <text x="111" y="196">Leave both pad rows open</text>
+  </g>
+</svg>

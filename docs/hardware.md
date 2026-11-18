@@ -1,6 +1,8 @@
 # Connecting the diagnostic Pico
 
-The diagnostic firmware uses one USB data cable. Either official Raspberry Pi Pico 2 model can be checked on the bench with the GPU in its normal PCIe slot. Leave the Pico headers open.
+The diagnostic firmware uses one USB data cable. Either official Raspberry Pi Pico 2 model can be checked on the bench with the GPU in its normal PCIe slot. The bench setup requires no soldering. Leave bare Pico pads as supplied, or leave fitted header pins disconnected. The GPU stays in its normal cooled PCIe installation.
+
+![Pico 2 W socket, BOOTSEL button and unused header rows](../site/assets/pico-connections.svg)
 
 ~~~text
 Ubuntu host
