@@ -27,7 +27,7 @@
 </section>
 <div class="work-area" id="guide"><div class="wrap">
   <div class="work-heading"><h2>Bench walkthrough</h2><button type="button" id="diagram-button" class="text-button">Connection diagram <span aria-hidden="true">⊞</span></button></div>
-  <noscript><p>JavaScript enables board selection, checked downloads, and the USB picker. You can read all five steps below.</p></noscript>
+  <noscript><p>JavaScript enables board selection, checked downloads, and the USB picker. You can read all six steps below.</p></noscript>
   <div class="workspace">
     <nav class="steps" aria-label="Walkthrough steps">
       <a href="#board"><b>01</b><span>Identify your board</span></a>
@@ -35,11 +35,12 @@
       <a href="#install"><b>03</b><span>Install diagnostics</span></a>
       <a href="#verify"><b>04</b><span>Verify the Pico</span></a>
       <a href="#card"><b>05</b><span>Inspect your card</span></a>
+      <a href="#glitch"><b>06</b><span>Glitch research</span></a>
     </nav>
     <article class="step-body" aria-label="Current instructions">
       <section id="board" class="panel">
         <p class="kicker">01 / 05 <span>•</span> Hardware</p><h3 tabindex="-1">Identify your board</h3>
-        <p>Read the model printed on your Pico. Both boards use the RP2350 bootloader ID, so the printed label determines which image to install.</p>
+        <p>Read the model printed on your Pico. This step installs USB diagnostics. The glitch research workflow is in step 6. Both boards use the RP2350 bootloader ID, so the printed label determines which image to install.</p>
         <h4>What needs soldering?</h4>
         <p>No soldering is needed for USB diagnostics or GPU inspection. Leave the Pico’s two rows of pads bare. If yours has headers installed, leave them in place with the pins disconnected. The USB cable supplies power and data.</p>
         <fieldset class="choices"><legend>Choose the board on your bench</legend>
@@ -82,7 +83,21 @@ ga100ctl gpu list</code></pre>
         <h4>Capture the baseline</h4><p>Replace <code>PCI_ADDRESS</code> with the full address from the listing. Save the reported card ID, event ID and physical label together. If the driver supplies no stable identifier, include <code>--asset-tag YOUR_LABEL</code> on each inspection.</p>
         <pre><code>ga100ctl gpu inspect --gpu PCI_ADDRESS
 ga100ctl --json report --card CARD_ID &gt; baseline.json</code></pre>
-        <p>GPU firmware flashing requires a card-specific image, compatibility checks and a recovery procedure. Those are currently unavailable in GPUglitch.</p>
+        <p>The research workflow for voltage glitching and persistent configuration is in the next step.</p>
+      </section>
+      <section id="glitch" class="panel">
+        <p class="kicker">06 / 06 <span>•</span> Research workflow</p><h3 tabindex="-1">GA100 voltage glitch</h3>
+        <p>The published Pico project uses four signals to put a CMP 170HX into a temporary fuse-control state. Its author reports testing the glitch on one card. The diagnostic UF2 from this guide only identifies the Pico and cannot drive these signals.</p>
+        <h4>Physical connections</h4>
+        <p>On the Pico side, the upstream pin map names GP0 for I²C SDA, GP1 for I²C SCL, GP22 for PEX_RST and any GND pad for common ground. The GPU endpoints are the board’s I2CC data, I2CC clock, PEX_RST_BUF* and ground. Use the annotated board photograph in the upstream guide to locate the actual GPU points. Confirm the exact PCB revision and signal identity before attaching wires. These are signal connections, with no Pico 3V3 or VBUS wire to the GPU.</p>
+        <figure class="bench-figure"><img src="assets/glitch-wiring.svg" width="620" height="310" alt="Four labeled connections from Pico GP0, GP1, GP22 and GND to the GPU I2CC data, clock, reset and ground points, respectively. Pico USB connects to the host and the GPU remains in the host PCIe slot."><figcaption>Logical wiring map. GPU solder locations are shown in the <a href="https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/images/better_pic(from%40ichundes).png">upstream annotated board photo</a>.</figcaption></figure>
+        <p>With all power removed, attach wires at the identified pads using a method appropriate for the PCB. Keep each connection insulated and strain relieved. Before applying power, check continuity from each Pico pin to its intended GPU net and check for shorts to neighboring pads. The upstream project specifies a direct PEX_RST connection without a series resistor.</p>
+        <h4>Firmware and host setup</h4>
+        <p>Use the upstream Pico firmware and host client for the glitch. Its pinned README contains build commands for Pico 2 and Pico 2 W, BOOTSEL installation, host prerequisites and the campaign command. Read its <a href="https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/BUILD.md">build guide</a> and <a href="https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/ADAPTIVE.md">adaptive campaign guide</a> before operating the card. The upstream Pico 2 W board-family setting conflicts with Raspberry Pi’s official RP2350A board definition, so verify the selected firmware against the actual Pico before energizing the GPU connection.</p>
+        <pre><code>sudo python3 -m ga100vfi campaign --bdf YOUR_PCI_ADDRESS --adaptive</code></pre>
+        <p>Run that command from the upstream host installation on the same machine as the card and Pico. The upstream workflow requires the NVIDIA driver unloaded for direct BAR0 access. A successful campaign reports the temporary “Goldilocks” state. Keep its JSON verdict and card-specific log with your bench records.</p>
+        <h4>Persistent configuration</h4>
+        <p>The glitch creates access to shadow fuse controls. Persistent changes require inspecting that die’s defect masks, programming new fuseless-fuse records and power cycling. Kate’s <a href="https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/">research write-up</a> explains that sequence and the different results across specimens. Do not copy another card’s mask or treat a reported memory size as proof that the full range works. Our <a href="https://github.com/pierce403/gpuglitch/blob/main/docs/unlocking.md">validation guide</a> covers the baseline and post-change checks.</p>
       </section>
       <div class="step-footer"><button type="button" id="back" class="text-button">Previous</button><a href="#bootsel" class="button primary" id="next">Continue to BOOTSEL</a></div>
     </article>

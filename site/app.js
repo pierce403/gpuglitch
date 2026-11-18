@@ -6,7 +6,7 @@ const boards = {
 };
 const stages = $$(".panel");
 const links = $$(".steps a");
-const nextLabels = ["Continue to BOOTSEL", "Continue to installation", "Continue to verification", "Continue to card inspection", "Return to board selection"];
+const nextLabels = ["Continue to BOOTSEL", "Continue to installation", "Continue to verification", "Continue to card inspection", "Continue to glitch research", "Return to board selection"];
 let stage = 0;
 let board = "";
 let bootSerial = "";
