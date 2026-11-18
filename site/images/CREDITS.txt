@@ -1,0 +1,20 @@
+Raspberry Pi Pico 2 and Pico 2 W board photographs
+
+pico-2.webp
+Figure 1, “Both sides of the Raspberry Pi Pico 2 board.”
+Raspberry Pi Pico 2 Datasheet, release 5, page 3.
+https://datasheets.raspberrypi.com/pico/pico-2-datasheet.pdf#page=4
+
+pico-2-w.webp
+Figure 1, “The Raspberry Pi Pico 2 W board.”
+Raspberry Pi Pico 2 W Datasheet, release 2, page 3.
+https://datasheets.raspberrypi.com/picow/pico-2-w-datasheet.pdf#page=4
+
+© 2022–2026 Raspberry Pi Ltd. Both datasheets credit Raspberry Pi Ltd
+and specify Creative Commons Attribution-NoDerivatives 4.0 International.
+https://creativecommons.org/licenses/by-nd/4.0/
+
+Each photograph is reproduced in full with its original transparency.
+The PDF image and its alpha channel were stored as a lossless WebP.
+The source publications include Raspberry Pi Ltd’s legal disclaimer on
+page 1 (PDF page 2). The resources are provided “as is.”

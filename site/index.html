@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f6f6f1">
+  <meta name="description" content="An illustrated bench guide for installing Pico 2 USB diagnostics and inspecting a CMP 170HX accelerator.">
+  <title>GPUglitch · CMP 170HX bench guide</title>
+  <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css"><script src="app.js" type="module"></script>
+</head>
+<body>
+<a class="skip" href="#guide">Skip to guide</a>
+<header><div class="wrap bar">
+  <a href="#top" class="brand" aria-label="GPUglitch home"><img src="assets/mark.svg" width="33" height="33" alt="">GPU<span>glitch</span></a>
+  <nav aria-label="Site navigation"><a href="#guide">Bench guide</a><a href="#usb" class="usb-link"><span aria-hidden="true">⌁</span> USB console</a></nav>
+</div></header>
+<main id="top">
+<section class="wrap hero">
+  <div><p class="kicker"><span class="rule"></span> Hardware field guide</p>
+    <h1>CMP 170HX<br>bench guide<span class="period">.</span></h1>
+    <p class="intro">Flash the diagnostic Pico, verify its USB identity, and record a baseline for your GPU.</p>
+    <a class="button primary" href="#guide">Open bench guide</a>
+  </div>
+  <figure class="plate"><img src="assets/card.svg" width="640" height="330" alt="Illustrated CMP 170HX with its passive heatsink and PCIe edge connector labeled.">
+    <figcaption><span>NVIDIA CMP 170HX</span><span>GA100 / PCIe</span></figcaption>
+  </figure>
+</section>
+<div class="work-area" id="guide"><div class="wrap">
+  <div class="work-heading"><h2>Bench walkthrough</h2><button type="button" id="diagram-button" class="text-button">Connection diagram <span aria-hidden="true">⊞</span></button></div>
+  <noscript><p>JavaScript enables board selection, checked downloads, and the USB picker. You can read all five steps below.</p></noscript>
+  <div class="workspace">
+    <nav class="steps" aria-label="Walkthrough steps">
+      <a href="#board"><b>01</b><span>Identify your board</span></a>
+      <a href="#bootsel"><b>02</b><span>Connect in BOOTSEL</span></a>
+      <a href="#install"><b>03</b><span>Install diagnostics</span></a>
+      <a href="#verify"><b>04</b><span>Verify the Pico</span></a>
+      <a href="#card"><b>05</b><span>Inspect your card</span></a>
+    </nav>
+    <article class="step-body" aria-label="Current instructions">
+      <section id="board" class="panel">
+        <p class="kicker">01 / 05 <span>•</span> Hardware</p><h3 tabindex="-1">Identify your board</h3>
+        <p>Read the model printed on your Pico. Both boards use the RP2350 bootloader ID, so the printed label determines which image to install.</p>
+        <fieldset class="choices"><legend>Choose the board on your bench</legend>
+          <label><input type="radio" name="board" value="pico2"><img src="images/pico-2.webp" width="585" height="525" alt="Pico 2 front and back, with an exposed square processor on the front."><strong>Raspberry Pi Pico 2</strong><small>Standard board</small></label>
+          <label><input type="radio" name="board" value="pico2_w"><img src="images/pico-2-w.webp" width="1080" height="908" alt="Pico 2 W front and back, with a silver wireless shield on the front."><strong>Raspberry Pi Pico 2 W</strong><small>Wireless board</small></label>
+        </fieldset>
+        <p class="credit">Photos © Raspberry Pi Ltd. <a href="images/CREDITS.txt">Image credits</a></p>
+      </section>
+      <section id="bootsel" class="panel">
+        <p class="kicker">02 / 05 <span>•</span> USB connection</p><h3 tabindex="-1">Connect in BOOTSEL</h3>
+        <ol><li>Disconnect the Pico. Leave its GPIO headers empty.</li><li>Hold down the white <b>BOOTSEL</b> button beside the USB connector. Plug the Pico directly into the host with a USB data cable, then release the button.</li><li>Look for a drive named <code>RP2350</code> containing <code>INFO_UF2.TXT</code>. Keep only the intended Pico attached during the transfer.</li></ol>
+        <div class="tool"><h4>Read the bootloader identity</h4><p>The USB picker can record the chip serial for comparison after reboot. Select the RP2350 in the picker.</p><button type="button" class="button dark" data-read="rom">Connect bootloader</button><p class="result" id="rom-result" role="status">Waiting for a bootloader.</p></div>
+        <details><summary>No USB picker or mounted volume?</summary><p>Use desktop Chrome or Edge on HTTPS or localhost for WebUSB. The file-copy method also works without a picker. On Ubuntu, open RP2350 in Files or run <code>lsusb -d 2e8a:000f</code>. If neither finds it, retry BOOTSEL with a known data cable.</p></details>
+      </section>
+      <section id="install" class="panel">
+        <p class="kicker">03 / 05 <span>•</span> Pico firmware</p><h3 tabindex="-1">Install diagnostics</h3>
+        <p>The UF2 replaces the program on the Pico. Save any previous image and application data you want to keep. The GPU stays in its normal PCIe slot.</p>
+        <div class="tool"><h4 id="image-label">Choose a board in step 1</h4><p>USB diagnostics 1.0.0 · 42,496 bytes</p><label class="confirm"><input type="checkbox" id="confirm-image"> I checked the printed model and saved what I need.</label><button type="button" id="download" class="button dark">Download matching UF2</button><p id="download-result" class="result" role="status"></p>
+        <details><summary>Image SHA-256</summary><code class="hash" id="checksum">Choose a board to see its checksum.</code></details></div>
+        <ol><li>Download the matching UF2 to your computer. The guide checks the file’s SHA-256 before offering it.</li><li>In your file manager, copy that UF2 to the identified <b>RP2350</b> volume. The copy starts the Pico flash.</li><li>Keep USB connected. The boot volume normally disappears when the Pico reboots. Continue to verify the running image.</li></ol>
+      </section>
+      <section id="verify" class="panel">
+        <p class="kicker">04 / 05 <span>•</span> Runtime check</p><h3 tabindex="-1">Verify the Pico</h3>
+        <p>After reboot, open the picker again and select the diagnostic device. The guide checks its board target and firmware version, then compares its serial with the one read in BOOTSEL.</p>
+        <div class="tool"><button type="button" class="button dark" data-read="runtime">Read diagnostic device</button><p id="runtime-result" class="result" role="status">Waiting for a runtime device.</p></div>
+        <details open><summary>Verify from Ubuntu</summary><p>Run <code>lsusb -v -d 2e8a:0009</code> or <code>ga100ctl --json pico list</code>. Check the same serial and look for <code id="expected">ga100ctl/BOARD/1.0.0</code> in the product string. A generic USB serial device alone is insufficient evidence.</p></details>
+        <details><summary>The Pico did not return</summary><p>Unplug and reconnect it normally, then inspect the USB listing again. To recover a prior application, enter BOOTSEL and copy your saved board-compatible UF2 to RP2350.</p></details>
+      </section>
+      <section id="card" class="panel">
+        <p class="kicker">05 / 05 <span>•</span> GPU inventory</p><h3 tabindex="-1">Inspect your card</h3>
+        <p>On the Ubuntu host with the CMP 170HX installed and cooled, record its identity before any changes. This toolkit reads the GPU through PCIe. Its firmware images target the Pico only.</p>
+        <h4>Install the host tool</h4><p>Download the <a href="downloads/ga100ctl-0.1.0-py3-none-any.whl" download>ga100ctl 0.1.0 wheel</a>. In its download directory, run these commands with Python 3.10 or newer.</p>
+        <pre><code>python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install ./ga100ctl-0.1.0-py3-none-any.whl
+ga100ctl doctor
+ga100ctl gpu list</code></pre>
+        <h4>Capture the baseline</h4><p>Replace <code>PCI_ADDRESS</code> with the full address from the listing. Save the reported card ID, event ID and physical label together. If the driver supplies no stable identifier, include <code>--asset-tag YOUR_LABEL</code> on each inspection.</p>
+        <pre><code>ga100ctl gpu inspect --gpu PCI_ADDRESS
+ga100ctl --json report --card CARD_ID &gt; baseline.json</code></pre>
+        <p>GPU firmware flashing requires a card-specific image, compatibility checks and a recovery procedure. Those are currently unavailable in GPUglitch.</p>
+      </section>
+      <div class="step-footer"><button type="button" id="back" class="text-button">Previous</button><a href="#bootsel" class="button primary" id="next">Continue to BOOTSEL</a></div>
+    </article>
+  </div>
+</div></div>
+<section id="usb" class="wrap console"><div><p class="kicker">WebUSB</p><h2>USB console</h2><p>Inspect USB descriptors on this computer. Device details stay in this tab.</p></div>
+  <div class="console-tool"><button type="button" class="button dark" data-read="either">Inspect USB device</button><output id="console-result" aria-live="polite">No device selected.</output></div>
+</section>
+</main>
+<dialog id="diagram"><div class="dialog-head"><h2>Connection diagram</h2><button type="button" id="close-diagram" aria-label="Close connection diagram">×</button></div>
+  <p>The host has two independent connections. Leave all Pico GPIO pins open.</p>
+  <img src="assets/connections.svg" width="560" height="220" alt="The Ubuntu host connects to the Pico with a USB data cable and to the CMP 170HX through a PCIe slot. There is no connection between the Pico and the card.">
+</dialog>
+<footer class="wrap"><span>GPUglitch / Bench guide</span><div><a href="downloads/ga100ctl-license.txt">Software license</a><a href="downloads/pico-sdk.txt">Pico SDK</a><a href="downloads/tinyusb.txt">TinyUSB</a></div></footer>
+</body></html>

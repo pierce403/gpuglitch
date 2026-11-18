@@ -1,0 +1,6 @@
+{
+  "name": "gpuglitch-site",
+  "private": true,
+  "scripts": { "preview": "wrangler dev", "deploy": "wrangler deploy", "check:deploy": "wrangler deploy --dry-run" },
+  "devDependencies": { "wrangler": "4.150.0" }
+}

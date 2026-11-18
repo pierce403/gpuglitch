@@ -66,3 +66,9 @@ Start with the [bench checklist](TODO.md). For each day worked, append tasks per
 - [CUDA validation, benchmarking methodology and comparisons](docs/benchmarking.md)
 
 `make doctor` checks live discovery. `make demo` records a simulated inspection in `build/demo.sqlite3` and prints its report. `make firmware` uses `PICO_SDK_PATH` and defaults to `BOARD=pico2_w`. The [MIT license](LICENSE) covers original project code. Dependency and reference project licenses apply to their respective code.
+
+## Static bench guide
+
+The buildless guide in [site/](site/index.html) includes board photographs, USB and PCIe diagrams, board-specific diagnostic UF2 downloads, browser USB descriptor checks and Ubuntu card intake. WebUSB requires a compatible browser on HTTPS or localhost. The Pico flash uses the RP2350 boot volume. Source and redistribution notices accompany the downloads.
+
+Preview with `python3 -m http.server 8000 --bind 127.0.0.1 --directory site` and open `http://localhost:8000`. For Cloudflare Workers Static Assets, use Node 22 or newer, run `npm ci` and `npm run check:deploy`. The deployment configuration targets the Worker `gpuglitch` and custom domain `gpuglitch.fun`. Workers Builds settings are repository `pierce403/gpuglitch`, production branch `main`, root `/`, an empty build command and deploy command `npm run deploy`.
