@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.13)
+if(NOT PICO_BOARD MATCHES "^(pico2|pico2_w)$")
+    message(FATAL_ERROR "Choose PICO_BOARD=pico2 or pico2_w")
+endif()
+include(${PICO_SDK_PATH}/pico_sdk_init.cmake)
+project(ga100ctl_usb VERSION 1.0.0 LANGUAGES C CXX ASM)
+pico_sdk_init()
+if(NOT PICO_SDK_VERSION_STRING STREQUAL "2.2.0")
+    message(FATAL_ERROR "This firmware targets Pico SDK 2.2.0")
+endif()
+if(NOT TARGET tinyusb_device)
+    message(FATAL_ERROR "Initialize the Pico SDK lib/tinyusb submodule")
+endif()
+add_executable(ga100ctl_usb main.c)
+target_link_libraries(ga100ctl_usb pico_stdlib)
+set_target_properties(ga100ctl_usb PROPERTIES LINKER_LANGUAGE C)
+target_compile_definitions(ga100ctl_usb PRIVATE
+    USBD_PRODUCT="ga100ctl/${PICO_BOARD}/${PROJECT_VERSION}"
+    USBD_DESC_STR_MAX=48
+    PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=0
+    PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0)
+pico_enable_stdio_usb(ga100ctl_usb 1)
+pico_enable_stdio_uart(ga100ctl_usb 0)
+pico_set_program_name(ga100ctl_usb "ga100ctl USB diagnostics")
+pico_set_program_version(ga100ctl_usb ${PROJECT_VERSION})
+pico_add_extra_outputs(ga100ctl_usb)

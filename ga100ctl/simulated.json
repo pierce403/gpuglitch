@@ -1,0 +1,10 @@
+{
+  "picos": [
+    {"mode":"bootsel","usb_path":"fixture-1","serial":"SIM-BOOT","mount":null,"writable":false,"board":null,"firmware_version":null,"compatible":null},
+    {"mode":"diagnostic","usb_path":"fixture-2","serial":"SIM-RUNTIME","mount":null,"writable":false,"board":"pico2_w","firmware_version":"1.0.0","compatible":true}
+  ],
+  "gpus": [
+    {"bdf":"0000:41:00.0","vendor_id":"10de","device_id":"20c2","subsystem_vendor_id":"10de","subsystem_device_id":"0000","pci_class":"0x030200","revision":"a1","cmp_170hx":true,"model":"GA100 [CMP 170HX]","driver":"nvidia","uuid":"GPU-00000000-0000-4000-8000-000000000001","serial":"SIM-001","driver_version":"fixture","vbios_version":"fixture","telemetry":{"memory_total_mib":8192,"temperature_c":38,"power_w":48},"pcie_link":{"current_link_speed":"2.5 GT/s PCIe","current_link_width":"4"}},
+    {"bdf":"0000:81:00.0","vendor_id":"10de","device_id":"2082","subsystem_vendor_id":"10de","subsystem_device_id":"0000","pci_class":"0x030200","revision":"a1","cmp_170hx":true,"model":"GA100 [CMP 170HX]","driver":"nvidia","uuid":"GPU-00000000-0000-4000-8000-000000000002","serial":"SIM-002","driver_version":"fixture","vbios_version":"fixture","telemetry":{"memory_total_mib":10240},"pcie_link":{}}
+  ]
+}
