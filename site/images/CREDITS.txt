@@ -18,3 +18,9 @@ Each photograph is reproduced in full with its original transparency.
 The PDF image and its alpha channel were stored as a lossless WebP.
 The source publications include Raspberry Pi Ltd’s legal disclaimer on
 page 1 (PDF page 2). The resources are provided “as is.”
+
+GA100 solder-point photo and NVVDD waveform
+Source: dalzyu/pico-ga100vfi at e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c
+https://github.com/dalzyu/pico-ga100vfi
+The solder-point photo credits @ichundes in the upstream filename.
+Reproduced unmodified. See the upstream MIT license and contributor credits.
