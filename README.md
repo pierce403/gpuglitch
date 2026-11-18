@@ -48,7 +48,7 @@ The default database is `$XDG_STATE_HOME/ga100ctl/history.sqlite3`, falling back
 
 | Workflow | Verified here | Bench acceptance still needed |
 | --- | --- | --- |
-| USB provisioning | Built SDK 2.2.0 diagnostic UF2s for Pico 2 W and Pico 2. Verified hashes on repeat builds, image metadata, and discovery of a real RP2350 in BOOTSEL. Tested target selection, UF2 transfer and reboot handling with fixtures. | The attached volume was read-only. A physical transfer and runtime identity check remain open. |
+| USB provisioning | Built SDK 2.2.0 diagnostic UF2s for Pico 2 W and Pico 2. Verified repeat-build hashes and image metadata. Flashed the Pico 2 W over BOOTSEL and verified the same board running diagnostic firmware 1.0.0 after reboot. | Physical unplug/reconnect check. Non-W transfer remains fixture-tested. |
 | GPU identification and history | Tested PCI and `nvidia-smi` parsing, multiple cards, missing drivers, baseline preservation, concurrent logging, offline reports and JSON export. Live discovery found no NVIDIA GPU here. | Confirm subsystem and driver identity on each card. |
 | CUDA validation | Implemented CUDA initialization, SM count, visible capacity, allocation integrity, timed compute stability, PCIe, NVLink and telemetry capture. | Real measurements on the selected GPU. |
 | Benchmarks | Implemented local PyTorch/Transformers, llama.cpp and two-GPU peer copy. Tested result parsing and failure handling. | Run the required backend with local models or an eligible pair of GPUs. vLLM remains planned. |

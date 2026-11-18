@@ -1,11 +1,11 @@
 # GA100 bench checklist
 
-The next bench session has two independent tasks. Verify that the USB diagnostic image boots on the identified Pico, and capture the first CMP 170HX baseline on a GPU host. Update the checkboxes as evidence arrives. Summarize each day's work in [the daily logs](logs/).
+The Pico 2 W boots the USB diagnostic image. The next bench checks are USB discovery after a cold reconnect and the first CMP 170HX baseline on a GPU host. Update the checkboxes as evidence arrives. Summarize each day's work in [the daily logs](logs/).
 
 ## Pico on the USB bench
 
-- [ ] Read the board marking and record whether it is a Pico 2 W or Pico 2. The RP2350 BOOTSEL descriptor is common to both. Match the selected build and manifest to the board. [Hardware setup](docs/hardware.md)
-- [ ] On a host with a writable BOOTSEL volume, install the USB diagnostic image on the selected Pico. Keep the flash event ID, image SHA-256 and observed runtime version. Mark this complete when the CLI reports `runtime_verified`. [Provisioning and recovery](docs/provisioning.md)
+- [x] Operator confirmed the attached board is a Pico 2 W. Verified the `pico2_w` USB diagnostic UF2 against its manifest, current sources and recorded build hash. [Bench log](logs/2026-11-18.md#pico-2-w-flash-preparation)
+- [x] Installed the selected Pico 2 W image. Flash event 2 returned `runtime_verified`, and a separate USB inspection confirmed firmware 1.0.0. [Installation record](logs/2026-11-18.md#pico-2-w-installation)
 - [ ] Disconnect and reconnect the Pico normally. Verify that `ga100ctl pico list` still shows the same serial, expected build target and compatible firmware. Record the outcome in that day's log.
 
 ## First CMP 170HX intake and validation
