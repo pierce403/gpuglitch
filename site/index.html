@@ -88,6 +88,13 @@ ga100ctl --json report --card CARD_ID &gt; baseline.json</code></pre>
       <section id="glitch" class="panel">
         <p class="kicker">06 / 06 <span>•</span> Research workflow</p><h3 tabindex="-1">GA100 voltage glitch</h3>
         <p>The published Pico project uses four signals to put a CMP 170HX into a temporary fuse-control state. Its author reports testing the glitch on one card. The diagnostic UF2 from this guide only identifies the Pico and cannot drive these signals.</p>
+        <div class="source-list" aria-label="Original research and software">
+          <h4>Original sources</h4>
+          <p><a href="https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/">Kate’s GA100 voltage glitch research</a> explains the fuse controller, the unlock sequence and measured outcomes.</p>
+          <p><a href="https://github.com/kate-land/ga100vfi/tree/b71e3990cc652a07cdbb5c6d1192e3e8116692d2">Kate’s ga100vfi repository</a> contains her original hardware and software work.</p>
+          <p><a href="https://github.com/dalzyu/pico-ga100vfi/tree/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c">DaLZy’s Raspberry Pi Pico port</a> supplies the Pico wiring, glitch firmware and host campaign described below.</p>
+          <p><a href="https://github.com/raspberrypi/pico-sdk/tree/a1438dff1d38bd9c65dbd693f0e5db4b9ae91779">Raspberry Pi Pico SDK 2.2.0</a> builds the USB diagnostic firmware offered in this guide.</p>
+        </div>
         <h4>Physical connections</h4>
         <p>On the Pico side, the upstream pin map names GP0 for I²C SDA, GP1 for I²C SCL, GP22 for PEX_RST and any GND pad for common ground. The GPU endpoints are the board’s I2CC data, I2CC clock, PEX_RST_BUF* and ground. Use the annotated board photograph in the upstream guide to locate the actual GPU points. Confirm the exact PCB revision and signal identity before attaching wires. These are signal connections, with no Pico 3V3 or VBUS wire to the GPU.</p>
         <figure class="bench-figure"><img src="assets/glitch-wiring.svg" width="620" height="310" alt="Four labeled connections from Pico GP0, GP1, GP22 and GND to the GPU I2CC data, clock, reset and ground points, respectively. Pico USB connects to the host and the GPU remains in the host PCIe slot."><figcaption>Logical wiring map. GPU solder locations are shown in the <a href="https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/images/better_pic(from%40ichundes).png">upstream annotated board photo</a>.</figcaption></figure>
