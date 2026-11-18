@@ -79,6 +79,7 @@ pre{overflow:auto;background:#273129;color:#f4f6eb;padding:1rem;border-radius:5p
 .console .kicker{margin:0 0 .3rem}
 .console p{max-width:42ch}.console-tool{width:48%;background:#e9ece3;padding:1.1rem;border:1px solid var(--line);border-radius:6px}
 output{display:block;margin-top:.9rem;line-height:1.55}
+#console-next{display:inline-block;margin-top:.8rem}
 footer{border-top:1px solid var(--line);padding-block:1.4rem;font-size:.82rem;color:#566258;gap:1rem}
 footer div{display:flex;gap:1rem;flex-wrap:wrap}
 dialog{background:var(--paper);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:1.5rem;width:min(600px,95vw)}

@@ -50,6 +50,8 @@ for (const radio of $$("input[name=board]")) {
     if (usbAvailable) {
       $("#rom-result").textContent = "Waiting for a bootloader.";
       $("#runtime-result").textContent = "Waiting for a runtime device.";
+      $("#console-result").textContent = "Inspect the device to check it against your board selection.";
+      $("#console-next").hidden = true;
     }
     $("#image-label").textContent = boards[board].name + " diagnostic image";
     $("#checksum").textContent = boards[board].sha;
@@ -104,14 +106,25 @@ const readButtons = $$("[data-read]");
 const outputs = {rom: $("#rom-result"), runtime: $("#runtime-result"), either: $("#console-result")};
 const hexId = value => value.toString(16).padStart(4, "0");
 
-function compareRuntime(device) {
-  if (!board) return "Choose the printed board model in step 1 before verifying.";
-  if (device.productName !== "ga100ctl/" + board + "/1.0.0") {
-    return "Unexpected product string for " + boards[board].name + ". Check the board label and selected image.";
+function interpretDevice(device) {
+  if (device.productId === romPid) {
+    return {message: "BOOTSEL is active. The Pico is ready to accept a firmware file. Check the printed board model before choosing an image.", step: board ? "install" : "board"};
   }
-  if (!bootSerial || !device.serialNumber) return "Board target and version match. Same-device verification requires a serial from both USB modes.";
-  if (bootSerial.toLowerCase() !== device.serialNumber.toLowerCase()) return "Serial mismatch. This device differs from the one selected in BOOTSEL.";
-  return "Verified. The BOOTSEL serial, board target and firmware version match.";
+  const target = Object.keys(boards).find(key => device.productName === "ga100ctl/" + key + "/1.0.0");
+  if (!target) {
+    return {message: "Unrecognized firmware. The device appeared over USB, but its product string does not identify a supported diagnostic image. Check the printed board model and firmware version.", step: "verify"};
+  }
+  if (board && board !== target) {
+    return {message: "Board mismatch. The firmware reports " + boards[target].name + ", but you selected " + boards[board].name + ". Check the model printed on your board.", step: "board"};
+  }
+  const ready = boards[target].name + " diagnostics are running (version 1.0.0).";
+  if (bootSerial && device.serialNumber) {
+    if (bootSerial.toLowerCase() !== device.serialNumber.toLowerCase()) {
+      return {message: "Serial mismatch. " + ready + " Select the same Pico you inspected in BOOTSEL.", step: "verify"};
+    }
+    return {message: (board ? "Verified. " : "Serial matched. ") + ready + " The serial matches the Pico seen in BOOTSEL. Continue to GPU inspection.", step: "card"};
+  }
+  return {message: ready + " If the printed model matches, continue to GPU inspection. The serial has not been matched across BOOTSEL and runtime.", step: "card"};
 }
 
 async function inspect(mode) {
@@ -122,17 +135,19 @@ async function inspect(mode) {
     const device = await navigator.usb.requestDevice({filters: ids.map(productId => ({vendorId, productId}))});
     if (device.vendorId !== vendorId || !ids.includes(device.productId)) throw new Error("The selected device does not match this step.");
     const summary = [hexId(device.vendorId) + ":" + hexId(device.productId), device.productName || "Unknown product", "Serial " + (device.serialNumber || "unavailable")].join(" · ");
-    let message = summary;
-    if (mode === "rom") {
+    if (device.productId === romPid) {
       bootSerial = device.serialNumber || "";
       outputs.runtime.textContent = "Waiting for a runtime device.";
-      message = "Bootloader observed. " + summary;
-    } else if (mode === "runtime") {
-      message = compareRuntime(device) + "\n" + summary;
     }
-    output.textContent = message;
-    if (mode !== "either") outputs.either.textContent = "Last observation\n" + summary;
+    const {message, step} = interpretDevice(device);
+    output.textContent = message + "\n" + summary;
+    outputs.either.textContent = output.textContent;
+    const next = $("#console-next");
+    next.href = "#" + step;
+    next.textContent = $(`#${step} h3`).textContent;
+    next.hidden = false;
   } catch (error) {
+    if (mode === "either") $("#console-next").hidden = true;
     output.textContent = error.name === "NotFoundError" ? "No device selected. Check the cable and mode, then reopen the picker." :
       "USB read failed. Use the host checks in the guide. " + (error.message || "");
   } finally {
