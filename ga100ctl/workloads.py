@@ -127,6 +127,40 @@ def validate(card, *, memory_mib=64, seconds=0):
     return result
 
 
+def _check_compute_clients(uuid):
+    """An automatic near-capacity test requires a clear compute-process list."""
+    try:
+        found = subprocess.run(
+            ["nvidia-smi", "-i", uuid, "--query-compute-apps=pid", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, check=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError("Compute-client status unavailable. Use an explicit --memory-mib for a bounded check.") from exc
+    rows = [line.strip() for line in found.stdout.splitlines() if line.strip()]
+    if rows and rows != ["No running processes found"]:
+        if all(pid.isdecimal() for pid in rows):
+            raise ValueError("The GPU has active compute clients. Repeat when idle or set an explicit --memory-mib.")
+        raise ValueError("Unrecognized compute-client status. Use an explicit --memory-mib for a bounded check.")
+
+
+def check_memory(card, *, memory_mib=None):
+    """Verify one CUDA allocation on the selected card and report its measured size."""
+    if memory_mib is not None:
+        check_validation_options(memory_mib, 0)
+    spec = {"operation": "memory-check", "memory_mib": memory_mib}
+    result = {"parameters": spec, "requested_mib": memory_mib,
+              "requested_bytes": None if memory_mib is None else memory_mib * 1024**2,
+              "verified_mib": 0, "verified_bytes": 0}
+    try:
+        uuid = _target(card)
+        if memory_mib is None:
+            _check_compute_clients(uuid)
+    except ValueError as exc:
+        return dict(result, status="unavailable", detail=str(exc))
+    result.update(_torch_run(spec, [uuid], 1800))
+    return result
+
+
 def _digest(path):
     digest = hashlib.sha256()
     with path.open("rb") as stream:

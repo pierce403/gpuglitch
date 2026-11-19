@@ -64,3 +64,50 @@ class InventoryTest(unittest.TestCase):
     def test_empty_sysfs(self, smi):
         self.assertEqual(gpu.discover(self.root), [])
         smi.assert_not_called()
+
+    @patch("ga100ctl.gpu._smi")
+    def test_dram_ecc_tracks_only_volatile_memory_for_selected_card(self, smi):
+        self.device("0000:01:00.0", "20c2")
+        uuid = "GPU-12345678-1111-2222-3333-444455556666"
+
+        def snapshot(counters, *, mode="Enabled", identity=uuid):
+            return f"""
+            <nvidia_smi_log><gpu id="00000000:01:00.0"><uuid>{identity}</uuid>
+            <ecc_mode><current_ecc>{mode}</current_ecc></ecc_mode><ecc_errors>
+            <volatile>{counters}</volatile><aggregate><dram_correctable>999</dram_correctable>
+            </aggregate></ecc_errors></gpu></nvidia_smi_log>"""
+
+        smi.return_value = snapshot(
+            "<single_bit><device_memory>15</device_memory><total>115</total></single_bit>"
+            "<double_bit><device_memory>2</device_memory></double_bit>")
+        card, = gpu.discover(self.root)
+        self.assertEqual(card["ecc"]["corrected"], 15)
+        self.assertEqual(card["ecc"]["uncorrected"], 2)
+        self.assertIn("observed_at", card["ecc"])
+
+        smi.return_value = snapshot("<sram_correctable>200</sram_correctable>"
+                                    "<dram_correctable>19</dram_correctable>"
+                                    "<dram_uncorrectable>2</dram_uncorrectable>")
+        report = gpu.ecc_after_check(card)
+        smi.assert_called_with("-q", "-x", "-i", uuid)
+        self.assertEqual(report["status"], "observed")
+        self.assertEqual(report["delta"], {"corrected": 4, "uncorrected": 0})
+
+        smi.return_value = snapshot("<dram_correctable>19</dram_correctable>"
+                                    "<dram_uncorrectable>N/A</dram_uncorrectable>")
+        partial = gpu.ecc_after_check(card)
+        self.assertEqual(partial["status"], "partial")
+        self.assertEqual(partial["delta"], {"corrected": 4, "uncorrected": None})
+
+        for response, status in (
+            (snapshot("<dram_correctable>0</dram_correctable><dram_uncorrectable>3</dram_uncorrectable>"),
+             "counter_reset"),
+            (snapshot("<dram_correctable>0</dram_correctable>", mode="Disabled"), "unavailable"),
+            (snapshot("", identity="another-card"), "unavailable"),
+            ("malformed", "unavailable"),
+        ):
+            with self.subTest(response=response):
+                smi.return_value = response
+                report = gpu.ecc_after_check(card)
+                self.assertEqual(report["status"], status)
+                self.assertEqual(report["delta"], {"corrected": None, "uncorrected": None})

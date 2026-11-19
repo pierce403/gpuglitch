@@ -4,6 +4,18 @@ Use a driver that exposes the card to `nvidia-smi`. Install a CUDA-enabled PyTor
 
 ## Verify a baseline
 
+### Automatic memory check
+
+Run `ga100ctl memory-check` to test all detected CMP 170HX cards sequentially. Automatic selection uses PCI IDs `10de:2082` and `10de:20c2`. An explicit `--gpu` selects a single enumerated NVIDIA card by full PCI address or UUID, including cards with another device ID.
+
+For the default test, ga100ctl checks the driver's compute-process list, then queries free memory in a CUDA worker scoped to the selected UUID. It leaves at least 512 MiB or 5% of total capacity free, whichever is greater, and caps a single allocation at 131072 MiB. It fills the allocation with four patterns, then writes an address-dependent value to every word before reading the entire allocation back to detect aliasing. A busy card or unavailable compute-process list skips automatic allocation. For a shared card, `--memory-mib` selects an exact allocation while preserving headroom.
+
+The human-readable summary reports verified MiB and per-card status. `--json` before the subcommand adds CUDA-visible total and free bytes when available, the planned allocation, SM count, link observations and sampled telemetry. ECC observations span discovery to the post-check reading on each card. An increase in uncorrected DRAM errors makes a passing memory test fail the overall check. Unknown counters remain unknown. Missing memory hidden by the current hardware configuration is outside CUDA's address space.
+
+History stores the inspection and memory-check event even when a check is unavailable. Use `ga100ctl --json report` to review the measurements. A nonzero exit means at least one card failed, could not be checked, or discovery found no target.
+
+### Select a fixed workload
+
 Select the actual PCI address from the first command.
 
 ```sh

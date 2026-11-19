@@ -24,7 +24,19 @@ ga100ctl pico list
 ga100ctl gpu list
 ```
 
-Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.2.0-py3-none-any.whl`.
+Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.3.0-py3-none-any.whl`.
+
+## Check usable memory
+
+On the GPU host, with CUDA-enabled PyTorch installed in the CLI's Python environment, run one command from the checkout.
+
+```sh
+.venv/bin/ga100ctl memory-check
+```
+
+The command discovers CMP 170HX cards, checks them one at a time, and saves a baseline and result for each. The summary pairs driver-reported capacity with the size of the allocation that passed readback. It also shows changes in DRAM error counters and the negotiated PCIe link. An 80 GB claim needs evidence from that card. A passing test covers the bytes exercised, and the command leaves GPU memory headroom for the driver and verification work.
+
+Add `--gpu BDF_OR_UUID` to select one device or `--memory-mib 1024` to request an exact test size. Use `ga100ctl --json memory-check` for the full per-card evidence. The check exercises the current configuration through CUDA. [Sizing and interpretation](docs/benchmarking.md#automatic-memory-check)
 
 ## PCIe, NVLink and saved captures
 

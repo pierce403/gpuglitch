@@ -58,6 +58,35 @@ def _validate(torch, spec):
     return result
 
 
+def _check_capacity(torch, spec):
+    mib = 1024 * 1024
+    free, total = torch.cuda.mem_get_info(0)
+    # Leave room for CUDA, bounded verification scratch, and other driver allocations.
+    reserve = max(512 * mib, (total + 19) // 20)
+    available_mib = max(0, (free - reserve) // mib)
+    requested = spec["memory_mib"]
+    planned = min(available_mib, 131072) if requested is None else requested
+    result = {
+        "cuda_free_bytes": free,
+        "cuda_total_bytes": total,
+        "reserve_bytes": reserve,
+        "requested_mib": requested,
+        "planned_mib": planned,
+        "planned_bytes": planned * mib,
+        "verified_bytes": 0,
+        "verified_mib": 0,
+        "sm_count": torch.cuda.get_device_properties(0).multi_processor_count,
+    }
+    if planned < 1 or planned > available_mib:
+        return dict(result, status="unavailable",
+                    detail=f"{available_mib} MiB available for testing after reserving headroom")
+    try:
+        result["memory_integrity"] = _memory_check(torch, planned)
+    except RuntimeError as exc:
+        return dict(result, status="failed", detail=str(exc))
+    return dict(result, status="passed", verified_bytes=planned * mib, verified_mib=planned)
+
+
 def _peer_copy(torch, repeats):
     if torch.cuda.device_count() != 2 or not torch.cuda.can_device_access_peer(0, 1):
         return {"status": "unavailable", "detail": "CUDA peer access unavailable for the selected pair"}
@@ -142,7 +171,7 @@ def execute(spec):
     versions = {"pytorch_version": str(torch.__version__), "pytorch_cuda_version": torch.version.cuda}
     if not torch.cuda.is_available():
         return dict(versions, status="unavailable", detail="PyTorch cannot initialize selected CUDA device")
-    ops = {"validate": _validate, "pytorch": _inference}
+    ops = {"validate": _validate, "pytorch": _inference, "memory-check": _check_capacity}
     try:
         torch.cuda.init()
         torch.cuda.reset_peak_memory_stats(0)

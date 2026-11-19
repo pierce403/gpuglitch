@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -42,13 +43,30 @@ def _smi(*args):
     return result.stdout
 
 
-def _driver_inventory():
+def _dram_ecc(item, observed_at):
+    """DRAM-only counters. NVIDIA used device_memory in older XML schemas."""
+    def counter(modern, legacy):
+        for path in (modern, legacy):
+            value = _field(item, "ecc_errors/volatile/" + path)
+            if value and re.fullmatch(r"[0-9]+", value):
+                return int(value)
+        return None
+
+    return {"scope": "volatile_dram", "observed_at": observed_at,
+            "mode": _field(item, "ecc_mode/current_ecc"),
+            "corrected": counter("dram_correctable", "single_bit/device_memory"),
+            "uncorrected": counter("dram_uncorrectable", "double_bit/device_memory")}
+
+
+def _driver_inventory(selector=None):
     try:
-        xml = ElementTree.fromstring(_smi("-q", "-x"))
+        selection = ("-i", selector) if selector else ()
+        xml = ElementTree.fromstring(_smi("-q", "-x", *selection))
     except (OSError, subprocess.SubprocessError, ElementTree.ParseError) as exc:
         return {}, f"nvidia-smi inventory unavailable ({type(exc).__name__})"
 
     by_bdf = {}
+    observed_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     for item in xml.findall("gpu"):
         bdf = _bdf(item.get("id", "") or item.findtext("pci/pci_bus_id", ""))
         if not bdf:
@@ -60,6 +78,7 @@ def _driver_inventory():
             "driver_name": _field(item, "product_name"), "driver_version": _field(xml, "driver_version"),
             "driver_cuda_compatibility": _field(xml, "cuda_version"), "vbios_version": _field(item, "vbios_version"),
             "mig_mode": _field(item, "mig_mode/current_mig"),
+            "ecc": _dram_ecc(item, observed_at),
             "telemetry": {
                 "memory_total_mib": _number(_field(item, "fb_memory_usage/total")),
                 "memory_used_mib": _number(_field(item, "fb_memory_usage/used")),
@@ -71,6 +90,36 @@ def _driver_inventory():
             },
         }
     return by_bdf, None
+
+
+def ecc_after_check(card):
+    """Compare the discovery-time DRAM counters with a fresh scoped driver reading."""
+    before = card.get("ecc")
+    fields = ("corrected", "uncorrected")
+    result = {"status": "unavailable", "before": before, "after": None,
+              "delta": dict.fromkeys(fields)}
+    bdf = _bdf(card.get("bdf") or "")
+    if not bdf:
+        return dict(result, detail="Missing device PCI address")
+    uuid = card.get("uuid")
+    selector = uuid if uuid and FULL_UUID.fullmatch(uuid) else bdf
+    inventory, warning = _driver_inventory(selector)
+    latest = inventory.get(bdf)
+    if not latest or (uuid and latest["uuid"] != uuid):
+        return dict(result, detail=warning or "Selected GPU was missing or changed identity")
+    after = latest["ecc"]
+    result["after"] = after
+    if not before or not all((sample.get("mode") or "").lower() == "enabled"
+                             for sample in (before, after)):
+        return dict(result, detail="ECC mode was unavailable or disabled at a sample")
+    comparable = [k for k in fields if before.get(k) is not None and after.get(k) is not None]
+    if any(after[k] < before[k] for k in comparable):
+        return dict(result, status="counter_reset", detail="A volatile counter decreased")
+    for k in comparable:
+        result["delta"][k] = after[k] - before[k]
+    if comparable:
+        result["status"] = "observed" if len(comparable) == len(fields) else "partial"
+    return result
 
 
 def discover(sysfs=Path("/sys/bus/pci/devices")):

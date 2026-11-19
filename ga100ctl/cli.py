@@ -48,6 +48,9 @@ def parser():
     inspect.add_argument("--asset-tag", help="unique operator-assigned physical card label")
     links = gpu_cmd.add_parser("links", help="show current PCIe and NVLink status for one GPU")
     links.add_argument("--gpu", help="full PCI address or UUID (optional with exactly one device)")
+    memory = commands.add_parser("memory-check", help="discover CMP 170HX cards and test exposed GPU memory")
+    memory.add_argument("--gpu", help="test only this NVIDIA GPU (full PCI address or UUID)")
+    memory.add_argument("--memory-mib", type=int, help="test this many MiB instead of sizing from free memory")
     validate = commands.add_parser("validate", help="exercise a bounded allocation and optionally run compute")
     validate.add_argument("--gpu", required=True)
     validate.add_argument("--memory-mib", type=int, default=64)
@@ -177,6 +180,38 @@ def run_workload(args, cards, history):
     return run_event(history, args.command, params, run, card, peer)
 
 
+def scan_memory(args, cards, history):
+    if args.memory_mib is not None:
+        workloads.check_validation_options(args.memory_mib, 0)
+    targets = [select(cards, args.gpu)] if args.gpu else [card for card in cards if card.get("cmp_170hx")]
+    if not targets:
+        return {"state": "unavailable", "cards": [], "detail": "No CMP 170HX detected by PCI ID."}
+
+    def check(card):
+        if args.simulate:
+            outcome = {"status": "simulated", "detail": "Fixture only. No memory tested.", "verified_mib": None}
+            outcome["ecc"] = {"status": "unavailable"}
+        else:
+            outcome = workloads.check_memory(card, memory_mib=args.memory_mib)
+            outcome["ecc"] = gpu.ecc_after_check(card)
+            outcome["memory_test_status"] = outcome["status"]
+            ecc_changes = outcome["ecc"].get("delta") or {}
+            if outcome["status"] == "passed" and (ecc_changes.get("uncorrected") or 0) > 0:
+                outcome.update(status="failed", detail="Uncorrected DRAM ECC errors increased during observation.")
+        outcome["driver_total_mib"] = card.get("telemetry", {}).get("memory_total_mib")
+        outcome["links"] = gpu.link_report(card, simulate=args.simulate)
+        return outcome
+
+    runs = []
+    for card in targets:
+        inputs = {"target_bdf": card["bdf"], "target_uuid": card.get("uuid"), "memory_mib": args.memory_mib}
+        event = run_event(history, "memory-check", inputs, partial(check, card), card)
+        runs.append({"bdf": card["bdf"], **event})
+    states = {run["state"] for run in runs}
+    state = next((s for s in ("failed", "unavailable", "simulated") if s in states), "passed")
+    return {"state": state, "cards": runs}
+
+
 def execute(args):
     scope = "fixture-v1" if args.simulate else "live"
     fixture = json.loads(files("ga100ctl").joinpath("simulated.json").read_text()) if args.simulate else {}
@@ -220,6 +255,8 @@ def execute(args):
         if cmd == "pico":
             return dict(source=scope, **provision(args, history))
         cards = gpus()
+        if cmd == "memory-check":
+            return dict(source=scope, **scan_memory(args, cards, history))
         if cmd == "gpu":
             card = select(cards, args.gpu)
             if args.asset_tag is not None:
@@ -230,6 +267,27 @@ def execute(args):
             card_id, event_id = history.inspect(card)
             return {"source": scope, "card_id": card_id, "event_id": event_id, "gpu": card}
         return dict(source=scope, **run_workload(args, cards, history))
+
+
+def show_memory_check(data):
+    print(f"Memory check ({data['source']})  {data['state']}")
+    if not data["cards"]:
+        print(data["detail"])
+    for run in data["cards"]:
+        result = run["result"]
+        print(f"\n{run['bdf']}  {run['state']}  event #{run['event_id']}")
+        for name, key in (("Driver total", "driver_total_mib"), ("Verified allocation", "verified_mib")):
+            mib = result.get(key)
+            print(f"  {name}  {mib} MiB" if mib is not None else f"  {name}  unavailable")
+        delta = result["ecc"].get("delta") or {}
+        print("  DRAM ECC change  corrected {} / uncorrected {}".format(
+            delta.get("corrected") if delta.get("corrected") is not None else "unknown",
+            delta.get("uncorrected") if delta.get("uncorrected") is not None else "unknown"))
+        pcie = result["links"]["pcie"]
+        print("  PCIe  {}  width {}".format(pcie.get("current_link_speed") or "unknown",
+                                            pcie.get("current_link_width") or "unknown"))
+        if result.get("detail"):
+            print(f"  {result['detail']}")
 
 
 def show_report(data):
@@ -276,6 +334,8 @@ def main(argv=None):
         data = execute(args)
         if args.command == "report" and not args.json:
             show_report(data)
+        elif args.command == "memory-check" and not args.json:
+            show_memory_check(data)
         else:
             print(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False))
         incomplete = {"failed", "unavailable", "interrupted",

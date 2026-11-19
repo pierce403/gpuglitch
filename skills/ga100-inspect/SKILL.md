@@ -7,6 +7,8 @@ Run `ga100ctl` after installation, or `python3 -m ga100ctl` from the gpuglitch c
 
 ## Inspect a card
 
+For a memory survey, use `ga100ctl --json memory-check`. It discovers CMP 170HX cards, tests each sequentially, and records per-card results with event IDs. Use `--gpu` when the request identifies one card. Report driver capacity, verified MiB, per-card state and DRAM ECC deltas separately. Automatic sizing checks for active compute clients. Preserve skipped cards and the reason in the report. Use an explicit `--memory-mib` only when a bounded workload is intended. The test covers accessible memory and leaves headroom.
+
 1. Run `ga100ctl gpu list`. Use the full PCI address or UUID of the requested device. If several devices match the user's description, ask which to inspect.
 2. For a baseline, run `ga100ctl gpu inspect --gpu "$gpu"` with the selected address or UUID in `gpu`. Keep its card ID and event ID. Use an operator-provided `--asset-tag` when serial and UUID are unavailable. A PCI slot can be reused by a different card.
 3. For interconnect status, run `ga100ctl gpu links --gpu "$gpu"`. Report the negotiated speed and width alongside the maximums. Preserve any unavailable readings. Driver link status and measured transfer throughput answer different questions.

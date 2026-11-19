@@ -38,6 +38,37 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.invoke("pico", "list")["picos"], doctor["picos"])
         self.assertFalse(self.db.exists())
 
+    def test_memory_check_finds_both_fixture_cards_without_testing_hardware(self):
+        with mock.patch("ga100ctl.cli.workloads.check_memory", side_effect=AssertionError("CUDA workload")):
+            scan = self.invoke("memory-check")
+        self.assertEqual(scan["state"], "simulated")
+        self.assertEqual([run["bdf"] for run in scan["cards"]], ["0000:41:00.0", "0000:81:00.0"])
+        self.assertTrue(all(run["result"]["verified_mib"] is None for run in scan["cards"]))
+        events = self.invoke("report")["events"]
+        self.assertEqual([e["kind"] for e in events], ["inspection", "memory-check"] * 2)
+        targeted = self.invoke("memory-check", "--gpu", "0000:81:00.0")
+        self.assertEqual(len(targeted["cards"]), 1)
+        self.assertEqual(targeted["cards"][0]["card_id"], scan["cards"][1]["card_id"])
+
+    def test_memory_check_limits_automatic_targets_and_keeps_each_result(self):
+        cards = [{"bdf": f"0000:{bus}:00.0", "uuid": f"GPU-{bus}", "cmp_170hx": bus != "03",
+                  "telemetry": {"memory_total_mib": 8192}} for bus in ["01", "02", "03"]]
+        with mock.patch.object(cli.gpu, "discover", return_value=cards), \
+             mock.patch.object(cli.gpu, "nvlink_status", return_value={"status": "unavailable"}), \
+             mock.patch.object(cli.gpu, "ecc_after_check", side_effect=[
+                 {"delta": {}}, {"delta": {"uncorrected": 1}}]), \
+             mock.patch.object(cli.workloads, "check_memory", side_effect=[
+                 {"status": "unavailable", "detail": "busy"},
+                 {"status": "passed", "verified_mib": 7000}]) as worker:
+            scan = self.invoke("memory-check", simulate=False, code=1)
+        self.assertEqual(scan["state"], "failed")
+        self.assertEqual(worker.call_count, 2)
+        self.assertEqual(scan["cards"][0]["state"], "unavailable")
+        second = scan["cards"][1]["result"]
+        self.assertEqual(second["memory_test_status"], "passed")
+        self.assertEqual(second["status"], "failed")
+        self.assertEqual(second["verified_mib"], 7000)
+
     def test_inventory_report_note_and_compare(self):
         self.assertIn("Multiple GPUs", self.invoke("gpu", "inspect", code=2))
         one = self.invoke("gpu", "inspect", "--gpu", "0000:41:00.0")
