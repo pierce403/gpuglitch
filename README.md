@@ -24,7 +24,7 @@ ga100ctl pico list
 ga100ctl gpu list
 ```
 
-Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.4.0-py3-none-any.whl`.
+Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.5.0-py3-none-any.whl`.
 
 ## Check usable memory
 
@@ -49,6 +49,25 @@ git -C ../cmpunlocker checkout 2c7e2ecd7944e791fec040d2680036beb4a9327b
 ```
 
 The command prompts for `sudo` as needed. It passes cmpunlocker's `--no-iommu --no-gen2-service --no-passthrough` options, but the installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules and writes a PCIe Gen2 modprobe setting. A successful exit means installation is pending a cold power cycle, not that capacity has been measured. Shut the host down, remove GPU power, restart, then run `ga100ctl gpu inspect` and `ga100ctl memory-check` to compare reported capacity and tested readback with the baseline. The installer may need network access to download matching NVIDIA source. Its `--profile` flag changes metadata; runtime geometry follows the card's PCI ID. [Method and limitations](docs/unlocking.md#published-software-memory-route)
+
+## Append permanent memory FF records
+
+The experimental [GA100 FF toolkit](https://github.com/kprinssu/ga100-ff-tools/tree/04573c9dbf82997fb481f26769ec58dc625d8318) publishes a per-card capture, planner and guarded OTP burner. `ga100ctl memory-ff burn` invokes that burner from a clean checkout at the reviewed commit; it does not copy its unlicensed source into gpuglitch. The upstream burner has synthetic I/O tests but no published real-GPU validation. Its live path supports the nominal 8 GB `20c2` card and glitch identity `2080`, not the `2082` 10 GB variant.
+
+First capture a normal `20c2` boot with the driver unbound and PCI memory decoding enabled. Generate a **memory-only** plan, simulate it and review every defect mask, FF block and blank append row. The Pico campaign does not by itself establish the burn window. Before programming, the operator must establish and maintain the required `SENSE_CTRL`, override, security/PLM state and any qualified external programming supply. The burner checks those register values, but never sets them. [Full capture-to-burn walkthrough](https://gpuglitch.fun/#records) · [Upstream burner requirements](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/BURNER.md)
+
+After a successful live preflight and manual review of the complete plan, the command that requests irreversible FF programming is:
+
+```sh
+.venv/bin/ga100ctl memory-ff burn \
+  --source "$HOME/ga100-ff-tools" \
+  --baseline "$HOME/ga100-ff-run/card-raw.json" \
+  --plan "$HOME/ga100-ff-run/card-memory-plan.json" \
+  --bdf 0000:1a:00.0 --plan-id FULL_REVIEWED_PLAN_ID \
+  --journal "$HOME/ga100-ff-run/card-program.jsonl" --confirm-burn
+```
+
+The wrapper prompts for `sudo`; the upstream burner then requires three exact interactive confirmations. It writes only the reviewed FF plan and stops on an uncertain result without retry. A successful same-session array readback still needs a cold power cycle and `memory-check` to establish usable capacity. The published FF toolkit does not supply a tested 80 GiB driver geometry profile, so this command alone is not an 80 GiB unlock. No fuse burn has been run on this project's card.
 
 ## PCIe, NVLink and saved captures
 
@@ -92,7 +111,7 @@ The default database is `$XDG_STATE_HOME/ga100ctl/history.sqlite3`, falling back
 | CUDA validation | Implemented CUDA initialization, SM count, visible capacity, allocation integrity, timed compute stability, PCIe, NVLink and telemetry capture. | Real measurements on the selected GPU. |
 | Benchmarks | Implemented local PyTorch/Transformers, llama.cpp and two-GPU peer copy. Tested result parsing and failure handling. | Run the required backend with local models or an eligible pair of GPUs. vLLM remains planned. |
 
-The supplied firmware identifies itself over USB and leaves the GPIOs unused. Voltage-glitch control, deployment of unlock firmware, raw fuse inspection and fuse programming are outside the implemented command set. `memory-enable` wraps a separate published software installer; it does not implement the Pico or Kate FF programming sequence. No result here establishes a maximum configuration for any card.
+The supplied firmware identifies itself over USB and leaves the GPIOs unused. Voltage-glitch control and deployment of unlock firmware remain outside the implemented command set. `memory-enable` wraps the cmpunlocker software installer; `memory-ff burn` invokes the separate experimental FF burner only after an externally prepared burn window and a card-specific plan. Neither command establishes a maximum configuration for any card.
 
 ## Project guide
 

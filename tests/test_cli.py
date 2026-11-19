@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -160,6 +161,128 @@ class CliTests(unittest.TestCase):
                         subprocess.CompletedProcess([], 0, stdout=value) for value in outputs]):
                     with self.assertRaisesRegex(ValueError, message):
                         cli._cmpunlocker_source(source)
+
+    def test_ff_burn_requires_explicit_interactive_reviewed_plan(self):
+        card = {"bdf": "0000:41:00.0", "vendor_id": "10de", "device_id": "20c2",
+                "model": "CMP 170HX"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            baseline = root / "baseline.json"
+            baseline.write_text("{}")
+            plan = root / "plan.json"
+            manifest = {"schema": "ga100-public-ff-plan-v2", "bdf": card["bdf"],
+                        "plan_id": "a" * 64, "status": "logical-plan-complete",
+                        "records": [{"row": 300, "word": 1}], "features": ["memory"],
+                        "route": "cmp", "public_sources_only": True}
+            plan.write_text(json.dumps(manifest))
+            journal = root / "burn.jsonl"
+            args = ("memory-ff", "burn", "--source", str(source), "--baseline", str(baseline),
+                    "--plan", str(plan), "--bdf", card["bdf"], "--plan-id", "a" * 64,
+                    "--journal", str(journal), "--confirm-burn")
+            with mock.patch.object(cli.gpu, "discover", return_value=[card]), \
+                 mock.patch.object(cli, "_ff_tools_source", return_value=(source, {"ffburn.py3": "h1", "ffplan.py3": "h2"})), \
+                 mock.patch.object(cli.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as runner:
+                self.assertIn("real GPU host", self.invoke(*args, code=2))
+                self.assertIn("--confirm-burn", self.invoke(*args[:-1], simulate=False, code=2))
+                self.assertIn("interactive terminal", self.invoke(*args, simulate=False, code=2))
+                runner.assert_not_called()
+                with mock.patch.object(cli.sys, "stdin", mock.Mock(isatty=lambda: True)):
+                    wrong = list(args)
+                    wrong[wrong.index("--plan-id") + 1] = "b" * 64
+                    self.assertIn("match the reviewed plan", self.invoke(*wrong, simulate=False, code=2))
+                    manifest["public_sources_only"] = False
+                    plan.write_text(json.dumps(manifest))
+                    self.assertIn("published mappings", self.invoke(*args, simulate=False, code=2))
+                    manifest["public_sources_only"] = True
+                    plan.write_text(json.dumps(manifest))
+                    journal.write_text("existing attempt")
+                    self.assertIn("new file", self.invoke(*args, simulate=False, code=2))
+                    runner.assert_not_called()
+
+    def test_ff_burn_delegates_three_confirmations_and_records_outcome(self):
+        card = {"bdf": "0000:41:00.0", "vendor_id": "10de", "device_id": "20c2",
+                "model": "CMP 170HX"}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            baseline = root / "baseline.json"
+            baseline.write_text("{}")
+            plan = root / "plan.json"
+            plan_id = "a" * 64
+            plan.write_text(json.dumps({"schema": "ga100-public-ff-plan-v2", "bdf": card["bdf"],
+                                        "plan_id": plan_id, "status": "logical-plan-complete",
+                                        "records": [{"row": 300, "word": 1}], "features": ["memory"],
+                                        "route": "cmp", "public_sources_only": True}))
+            journal = root / "burn.jsonl"
+            args = ("memory-ff", "burn", "--source", str(source), "--baseline", str(baseline),
+                    "--plan", str(plan), "--bdf", card["bdf"], "--plan-id", plan_id,
+                    "--journal", str(journal), "--confirm-burn")
+            with mock.patch.object(cli.gpu, "discover", return_value=[card]), \
+                 mock.patch.object(cli, "_ff_tools_source", return_value=(source, {"ffburn.py3": "h1", "ffplan.py3": "h2"})) as checked, \
+                 mock.patch.object(cli.sys, "stdin", mock.Mock(isatty=lambda: True)), \
+                 mock.patch.object(cli.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as runner:
+                done = self.invoke(*args, simulate=False)
+                self.assertEqual(done["state"], "pending_cold_boot_verification")
+                self.assertEqual(done["result"]["upstream_exit_code"], 0)
+                self.assertFalse(journal.exists())  # Only the upstream burner creates this.
+                self.assertEqual(checked.call_count, 2)
+                command = runner.call_args.args[0]
+                self.assertEqual(command[:5], ["sudo", sys.executable, "-I", "-S", str(source / "ffburn.py3")])
+                self.assertEqual(command[-4:], ["--execute-plan", plan_id, "--journal", str(journal)])
+                self.assertNotIn("input", runner.call_args.kwargs)
+                self.assertNotIn("stdin", runner.call_args.kwargs)
+                self.assertIs(runner.call_args.kwargs["stdout"], runner.call_args.kwargs["stderr"])
+                self.assertEqual(self.invoke("report", simulate=False)["events"][-1]["state"],
+                                 "pending_cold_boot_verification")
+                runner.return_value = subprocess.CompletedProcess([], 1)
+                failed = self.invoke(*args, simulate=False, code=1)
+                self.assertEqual(failed["state"], "failed")
+                self.assertIn("partial or unknown", failed["result"]["detail"])
+                self.assertEqual(self.invoke("report", simulate=False)["events"][-1]["state"], "failed")
+
+    def test_ff_burn_rejects_unsupported_variant_before_source_or_sudo(self):
+        card = {"bdf": "0000:41:00.0", "vendor_id": "10de", "device_id": "2082",
+                "model": "CMP 170HX"}
+        with mock.patch.object(cli.gpu, "discover", return_value=[card]), \
+             mock.patch.object(cli, "_ff_tools_source") as source, \
+             mock.patch.object(cli.subprocess, "run") as runner:
+            args = ("memory-ff", "burn", "--source", "/tmp/source", "--baseline", "/tmp/base.json",
+                    "--plan", "/tmp/plan.json", "--bdf", card["bdf"], "--plan-id", "a",
+                    "--journal", "/tmp/burn.jsonl", "--confirm-burn")
+            self.assertIn("2082 is unsupported", self.invoke(*args, simulate=False, code=2))
+            source.assert_not_called()
+            runner.assert_not_called()
+
+    def test_ff_tools_source_requires_pinned_clean_checkout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            for name in ("ffburn.py3", "ffplan.py3"):
+                (source / name).write_text("pass\n")
+            outputs = [str(source) + "\n", cli.FF_TOOLS_COMMIT + "\n", ""]
+            fake_hash = hashlib.sha256(b"pass\n").hexdigest()
+            with mock.patch.dict(cli.FF_TOOLS_SCRIPT_SHA256,
+                                 {"ffburn.py3": fake_hash, "ffplan.py3": fake_hash}, clear=True):
+                with mock.patch.object(cli.subprocess, "run", side_effect=[
+                        subprocess.CompletedProcess([], 0, stdout=value) for value in outputs]):
+                    actual, hashes = cli._ff_tools_source(source)
+                self.assertEqual(actual, source)
+                self.assertEqual(set(hashes), {"ffburn.py3", "ffplan.py3"})
+                self.assertTrue(all(len(value) == 64 for value in hashes.values()))
+                for revision, status, message in [("0" * 40, "", "pinned commit"),
+                                                   (cli.FF_TOOLS_COMMIT, " M ffburn.py3", "local changes")]:
+                    outputs = [str(source) + "\n", revision + "\n", status]
+                    with mock.patch.object(cli.subprocess, "run", side_effect=[
+                            subprocess.CompletedProcess([], 0, stdout=value) for value in outputs]):
+                        with self.assertRaisesRegex(ValueError, message):
+                            cli._ff_tools_source(source)
+            outputs = [str(source) + "\n", cli.FF_TOOLS_COMMIT + "\n", ""]
+            with mock.patch.object(cli.subprocess, "run", side_effect=[
+                    subprocess.CompletedProcess([], 0, stdout=value) for value in outputs]):
+                with self.assertRaisesRegex(ValueError, "script hashes differ"):
+                    cli._ff_tools_source(source)
 
     def test_installer_streams_to_stderr_and_retains_bounded_tail(self):
         with tempfile.TemporaryDirectory() as directory:

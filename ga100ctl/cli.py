@@ -22,6 +22,11 @@ from .history import History, identifier
 CMPUNLOCKER_COMMIT = "2c7e2ecd7944e791fec040d2680036beb4a9327b"
 CMPUNLOCKER_MEMORY_MIB = {"20c2": 65536, "2082": 40960}
 CMPUNLOCKER_FLAGS = ("--no-iommu", "--no-gen2-service", "--no-passthrough")
+FF_TOOLS_COMMIT = "04573c9dbf82997fb481f26769ec58dc625d8318"
+FF_TOOLS_SCRIPT_SHA256 = {
+    "ffburn.py3": "121159ebda1d2d49cb1c011b4b845815ce4869a87bff4ce6928cfa93fcc4fbd0",
+    "ffplan.py3": "3b4ed7bd49eb5531c30137ef3289878b1b0b91691e4921d7732db6edf2e85929",
+}
 
 
 def parser():
@@ -63,6 +68,16 @@ def parser():
     enable.add_argument("--source", type=Path, required=True, help="clean cmpunlocker checkout at the pinned revision")
     enable.add_argument("--gpu", help="full PCI address or UUID of the only visible NVIDIA GPU")
     enable.add_argument("--confirm", action="store_true", help="authorize host driver and PCIe configuration changes")
+    ff = commands.add_parser("memory-ff", help="review or program card-specific fuseless-fuse records")
+    ff_actions = ff.add_subparsers(dest="action", required=True)
+    burn = ff_actions.add_parser("burn", help="invoke the pinned upstream FF burner interactively")
+    burn.add_argument("--source", type=Path, required=True, help="clean ga100-ff-tools checkout at the pinned revision")
+    burn.add_argument("--baseline", type=Path, required=True, help="raw capture used to create the plan")
+    burn.add_argument("--plan", type=Path, required=True, help="manually reviewed public FF plan")
+    burn.add_argument("--bdf", required=True, help="full PCI address of the selected card")
+    burn.add_argument("--plan-id", required=True, help="full plan ID from offline burner review")
+    burn.add_argument("--journal", type=Path, required=True, help="new upstream programming journal path")
+    burn.add_argument("--confirm-burn", action="store_true", help="authorize invoking the irreversible upstream burner")
     validate = commands.add_parser("validate", help="exercise a bounded allocation and optionally run compute")
     validate.add_argument("--gpu", required=True)
     validate.add_argument("--memory-mib", type=int, default=64)
@@ -341,6 +356,106 @@ def enable_memory(args, cards, history):
     return {"source": "live", **run_event(history, "memory-enable", inputs, install, card)}
 
 
+def _ff_tools_source(path):
+    """Accept only the reviewed upstream tree, without vendoring its burner."""
+    source = path.resolve(strict=True)
+    scripts = tuple(FF_TOOLS_SCRIPT_SHA256)
+    if not source.is_dir() or any(not (source / name).is_file() for name in scripts):
+        raise ValueError("--source must be a ga100-ff-tools checkout with ffburn.py3 and ffplan.py3")
+
+    def git(*arguments):
+        result = subprocess.run(["git", "-C", str(source), *arguments],
+                                capture_output=True, text=True, check=True, timeout=15)
+        return result.stdout.strip()
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel")).resolve() != source:
+            raise ValueError("--source must name the ga100-ff-tools repository root")
+        if git("rev-parse", "HEAD") != FF_TOOLS_COMMIT:
+            raise ValueError(f"ga100-ff-tools must be at pinned commit {FF_TOOLS_COMMIT}")
+        if git("status", "--porcelain=v1", "--untracked-files=all"):
+            raise ValueError("ga100-ff-tools checkout has local changes or untracked files")
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"cannot verify ga100-ff-tools checkout: {exc.stderr.strip()}") from exc
+    hashes = {name: hashlib.sha256((source / name).read_bytes()).hexdigest() for name in scripts}
+    if hashes != FF_TOOLS_SCRIPT_SHA256:
+        raise ValueError("ga100-ff-tools script hashes differ from the reviewed pinned revision")
+    return source, hashes
+
+
+def _ff_burn_inputs(args, cards):
+    bdf = gpu._bdf(args.bdf)
+    if bdf is None:
+        raise ValueError("--bdf must be a full PCI address, for example 0000:01:00.0")
+    matches = [card for card in cards if card.get("bdf") == bdf]
+    if len(matches) != 1:
+        raise ValueError(f"No unique NVIDIA GPU found at {bdf}")
+    card = matches[0]
+    if card.get("vendor_id") != "10de" or card.get("device_id") not in {"20c2", "2080"}:
+        raise ValueError("The upstream FF burner accepts only 10de:20c2 or glitch identity 10de:2080; 10de:2082 is unsupported")
+
+    source, hashes = _ff_tools_source(args.source)
+    baseline = args.baseline.resolve(strict=True)
+    plan = args.plan.resolve(strict=True)
+    if not baseline.is_file() or not plan.is_file():
+        raise ValueError("--baseline and --plan must be existing regular files")
+    journal = args.journal.absolute()
+    if journal.exists() or journal.is_symlink():
+        raise ValueError("--journal must name a new file; never reuse a programming journal")
+    if not journal.parent.is_dir():
+        raise ValueError("--journal parent directory must already exist")
+    try:
+        manifest = json.loads(plan.read_text())
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Cannot read FF plan JSON: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("schema") != "ga100-public-ff-plan-v2":
+        raise ValueError("--plan must use the upstream public FF plan v2 schema")
+    if gpu._bdf(str(manifest.get("bdf", ""))) != bdf or manifest.get("plan_id") != args.plan_id:
+        raise ValueError("--bdf and --plan-id must match the reviewed plan exactly")
+    records = manifest.get("records")
+    features = manifest.get("features")
+    if (manifest.get("status") != "logical-plan-complete"
+            or not isinstance(records, list) or not records
+            or not isinstance(features, list) or "memory" not in features):
+        raise ValueError("The selected plan must be complete and include nonempty memory records")
+    if manifest.get("route") != "cmp" or manifest.get("public_sources_only") is not True:
+        raise ValueError("memory-ff burn accepts only the CMP route with published mappings")
+    if not sys.stdin.isatty():
+        raise ValueError("memory-ff burn requires an interactive terminal for the upstream confirmations")
+    return card, bdf, source, hashes, baseline, plan, journal
+
+
+def burn_ff_memory(args, cards, history):
+    card, bdf, source, hashes, baseline, plan, journal = _ff_burn_inputs(args, cards)
+    command = ["sudo", sys.executable, "-I", "-S", str(source / "ffburn.py3"),
+               "--baseline", str(baseline), "--plan", str(plan),
+               "--bdf", bdf, "--execute-plan", args.plan_id, "--journal", str(journal)]
+    inputs = {"target_bdf": bdf, "pci_id": "10de:" + card["device_id"],
+              "source": str(source), "source_commit": FF_TOOLS_COMMIT,
+              "source_scripts_sha256": hashes, "baseline": str(baseline),
+              "baseline_sha256": hashlib.sha256(baseline.read_bytes()).hexdigest(),
+              "plan": str(plan), "plan_sha256": hashlib.sha256(plan.read_bytes()).hexdigest(),
+              "plan_id": args.plan_id, "journal": str(journal)}
+
+    def invoke():
+        # The upstream script must ask its own three questions on inherited stdin.
+        # We never feed answers or impose a timeout during an irreversible write.
+        _, current_hashes = _ff_tools_source(source)
+        if current_hashes != hashes:
+            raise ValueError("ga100-ff-tools scripts changed after initial review")
+        result = subprocess.run(command, stdout=sys.stderr, stderr=sys.stderr, check=False)
+        exit_code = result.returncode if result.returncode >= 0 else 128 - result.returncode
+        if exit_code:
+            return {"status": "failed", "upstream_exit_code": exit_code,
+                    "upstream_journal": str(journal),
+                    "detail": "Upstream burner exited unsuccessfully. OTP state may be partial or unknown; inspect its journal before any further action."}
+        return {"status": "pending_cold_boot_verification", "upstream_exit_code": 0,
+                "upstream_journal": str(journal),
+                "detail": "Upstream reported same-session array verification only. Cold-boot replay and usable memory remain unverified."}
+
+    return {"source": "live", **run_event(history, "memory-ff-burn", inputs, invoke, card)}
+
+
 def execute(args):
     scope = "fixture-v1" if args.simulate else "live"
     fixture = json.loads(files("ga100ctl").joinpath("simulated.json").read_text()) if args.simulate else {}
@@ -369,6 +484,11 @@ def execute(args):
             raise ValueError("memory-enable requires a real GPU host")
         if not args.confirm:
             raise ValueError("Changing the host driver requires --confirm")
+    if cmd == "memory-ff":
+        if args.simulate:
+            raise ValueError("memory-ff burn requires a real GPU host")
+        if not args.confirm_burn:
+            raise ValueError("Invoking irreversible FF programming requires --confirm-burn")
 
     state_dir = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
     db = args.db or state_dir / "ga100ctl/history.sqlite3"
@@ -389,6 +509,8 @@ def execute(args):
         if cmd == "pico":
             return dict(source=scope, **provision(args, history))
         cards = gpus()
+        if cmd == "memory-ff":
+            return burn_ff_memory(args, cards, history)
         if cmd == "memory-enable":
             return enable_memory(args, cards, history)
         if cmd == "memory-check":
@@ -474,6 +596,8 @@ def main(argv=None):
             show_memory_check(data)
         else:
             print(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False))
+        if args.command == "memory-ff" and args.action == "burn":
+            return data["result"]["upstream_exit_code"]
         incomplete = {"failed", "unavailable", "interrupted",
                       "copied_runtime_unverified", "transfer_error_runtime_unverified"}
         return 1 if data.get("state") in incomplete else 0
