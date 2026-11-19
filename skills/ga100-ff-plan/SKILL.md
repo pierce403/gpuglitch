@@ -9,7 +9,7 @@ Use this skill for a proposed permanent memory floorsweep change. For ordinary d
 
 ## Boundary
 
-Agents may capture, plan, simulate, compare saved post-cold-boot captures, and inspect evidence. **Never invoke `ffburn.py3`, `ga100ctl memory-ff burn`, another live burner, or a custom replacement against hardware. Never provide or automate the burner's confirmations.** Do not issue `CMD_WRITE`, `CMD_SENSE`, write FUSEWDATA, arm override/security/PLM registers, change voltage or GPIO, reset the card, unbind drivers, or alter PCI configuration as part of this workflow. The upstream [agent instructions](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/AGENTS.md) reserve programming for a human operator. Synthetic I/O tests and offline planning are allowed.
+Agents may capture, plan, simulate, compare saved post-cold-boot captures, and inspect evidence. **Never invoke `ffburn.py3`, `ga100ctl memory-ff burn`, another live burner, or a custom replacement against hardware. Never provide or automate the burner's confirmations.** Do not issue `CMD_WRITE`, `CMD_SENSE`, write FUSEWDATA, arm override/security/PLM registers, change voltage or GPIO, reset or power-cycle the card or host, operate PSU/PDU controls, unbind drivers, or alter PCI configuration as part of this workflow. The upstream [agent instructions](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/AGENTS.md) reserve programming for a human operator. Synthetic I/O tests and offline planning are allowed.
 
 ## Select and capture one card
 
@@ -66,7 +66,7 @@ For a proposed memory plan, require `status: logical-plan-complete`, route `cmp`
 
 ## Compare a later cold-boot capture
 
-Only after a human-operated attempt and a full cold power cycle, compare a **new** normal-boot raw capture with the saved baseline and exact reviewed plan. Agents do not cause the power cycle, driver unbind, PCI setup or programming. Live post-capture is permitted only if the operator has already left the card unbound, PCI memory decoding enabled and BAR0 accessible. Otherwise work from a supplied post-capture or stop.
+Only after a human-operated attempt and the operator's [cold card power cycle](../../docs/safety.md#cold-card-power-cycle), compare a **new** normal-boot raw capture with the saved baseline and exact reviewed plan. An Ubuntu `reboot` or changed host boot ID does not prove the card lost power. The operator records clean shutdown and removal of all PSU, auxiliary GPU, Pico USB and external bench power feeds; agents do not cause or control this step, driver unbind, PCI setup or programming. Live post-capture is permitted only if the operator has already left the card unbound, PCI memory decoding enabled and BAR0 accessible. Otherwise work from a supplied post-capture or stop.
 
 Confirm the same physical card, same full BDF and saved full UUID as the baseline. Use a separate private output directory and pass the same UUID association to upstream capture:
 

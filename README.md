@@ -48,7 +48,7 @@ git -C ../cmpunlocker checkout 2c7e2ecd7944e791fec040d2680036beb4a9327b
 .venv/bin/ga100ctl memory-enable --source ../cmpunlocker --confirm
 ```
 
-The command prompts for `sudo` as needed. It passes cmpunlocker's `--no-iommu --no-gen2-service --no-passthrough` options, but the installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules and writes a PCIe Gen2 modprobe setting. A successful exit means installation is pending a cold power cycle, not that capacity has been measured. Shut the host down, remove GPU power, restart, then run `ga100ctl gpu inspect` and `ga100ctl memory-check` to compare reported capacity and tested readback with the baseline. The installer may need network access to download matching NVIDIA source. Its `--profile` flag changes metadata; runtime geometry follows the card's PCI ID. [Method and limitations](docs/unlocking.md#published-software-memory-route)
+The command prompts for `sudo` as needed. It passes cmpunlocker's `--no-iommu --no-gen2-service --no-passthrough` options, but the installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules and writes a PCIe Gen2 modprobe setting. A successful exit means installation is pending a [cold card power cycle](docs/safety.md#cold-card-power-cycle), not that capacity has been measured. An Ubuntu `reboot` alone is insufficient. After the human operator shuts the host down and removes all card power, restart and run `ga100ctl gpu inspect` and `ga100ctl memory-check` to compare reported capacity and tested readback with the baseline. The installer may need network access to download matching NVIDIA source. Its `--profile` flag changes metadata; runtime geometry follows the card's PCI ID. [Method and limitations](docs/unlocking.md#published-software-memory-route)
 
 ## Plan memory FF records before the Pico campaign
 
@@ -118,7 +118,7 @@ Use the full `plan_id` from the reviewed plan, not the placeholder. The wrapper 
 
 ## Verify FF replay after a cold boot
 
-After any human-operated burn, fully remove GPU power and cold boot the same card. Before binding the NVIDIA driver, arrange the same upstream raw-capture prerequisites: the card already unbound, PCI memory decoding enabled and BAR0 accessible. Restore `FF_TOOLS`, `CARD_BDF`, `GPU_UUID` and the saved absolute `RUN_DIR` in a new shell. Confirm the same full BDF and GPU UUID as the baseline, then use a fresh private output directory for the post-boot evidence:
+After any human-operated burn, the operator must perform the [cold card power cycle](docs/safety.md#cold-card-power-cycle): cleanly power off Ubuntu, remove AC from every PSU feeding the PCIe slot and auxiliary GPU power, de-energize attached Pico and bench supplies according to their setup, wait for discharge, then restore power and boot. A simple `reboot` does not establish this. Before binding the NVIDIA driver, arrange the same upstream raw-capture prerequisites: the card already unbound, PCI memory decoding enabled and BAR0 accessible. Restore `FF_TOOLS`, `CARD_BDF`, `GPU_UUID` and the saved absolute `RUN_DIR` in a new shell. Confirm the same full BDF and GPU UUID as the baseline, then use a fresh private output directory for the post-boot evidence:
 
 ```sh
 POST_DIR=$(mktemp -d "$HOME/ga100-ff-post.XXXXXXXX")
