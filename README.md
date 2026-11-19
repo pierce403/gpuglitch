@@ -69,6 +69,6 @@ Start with the [bench checklist](TODO.md). For each day worked, append tasks per
 
 ## Static bench guide
 
-The buildless guide in [site/](site/index.html) includes board photographs, USB and PCIe diagrams, board-specific diagnostic UF2 downloads, browser USB descriptor checks and Ubuntu card intake. WebUSB requires a compatible browser on HTTPS or localhost. The Pico flash uses the RP2350 boot volume. Source and redistribution notices accompany the downloads.
+The buildless guide in [site/](site/index.html) walks through the upstream Pico GA100VFI firmware and host client, with GPU preflight checks, board wiring, command examples, expected output shapes and source graphics. The site links to Kate’s GA100 research for the later, card-specific fuse work.
 
 Preview with `python3 -m http.server 8000 --bind 127.0.0.1 --directory site` and open `http://localhost:8000`. For Cloudflare Workers Static Assets, use Node 22 or newer, run `npm ci` and `npm run check:deploy`. The deployment configuration targets the Worker `gpuglitch` and custom domain `gpuglitch.fun`. Workers Builds settings are repository `pierce403/gpuglitch`, production branch `main`, root `/`, an empty build command and deploy command `npm run deploy`.
