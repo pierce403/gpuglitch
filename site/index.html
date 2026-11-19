@@ -56,6 +56,33 @@ PY</code></pre>
 <section id="defects" class="panel">
 <p class="kicker">08 / 12 · GPU inspection</p>
 <h3 tabindex="-1">Inspect the card and read a capture</h3>
+<h4>What a memory scan looks like</h4>
+<p>Floorsweeping determines which hardware units the GPU exposes. Defragmenting rearranges stored data. <code>ga100ctl memory-check</code> leaves the hardware configuration in place and tests a CUDA allocation. It writes a different value at each word address before reading the allocation back, so it can detect when two addresses unexpectedly refer to the same storage.</p>
+<p>Try the 8&nbsp;GB example from the gpuglitch checkout. The PCI address selects one of the bundled simulated cards. This command runs without a Pico or GPU.</p>
+<pre><code>.venv/bin/ga100ctl --simulate memory-check --gpu 0000:41:00.0</code></pre>
+<div class="expected"><b>Actual output from the simulation</b>
+<pre><code>Memory check (fixture-v1)  simulated
+
+0000:41:00.0  simulated  event #2
+  Driver total  8192 MiB
+  Verified allocation  unavailable
+  DRAM ECC change  corrected unknown / uncorrected unknown
+  PCIe  2.5 GT/s PCIe  width 4
+  Fixture only. No memory tested.</code></pre>
+<p>The event number depends on the local history. The 8192 MiB comes from the fixture. “Verified allocation” stays unavailable because the simulation never allocates GPU memory.</p></div>
+<details><summary>How would a passing or failed readback look?</summary>
+<p>These excerpts use invented measurements to illustrate two outcomes on a card whose driver reports 80 GiB.</p>
+<p><strong>Passing allocation</strong></p>
+<pre><code>  Driver total  81920.0 MiB
+  Verified allocation  76800 MiB</code></pre>
+<p>75 GiB passed every pattern. The remaining 5 GiB was outside this allocation. Some memory may already be in use, and the tool reserves headroom.</p>
+<p><strong>Address mismatch</strong></p>
+<pre><code>  Verified allocation  0 MiB
+  address-pattern mismatch at chunk starting at word 262144</code></pre>
+<p>A mismatch gives the starting index of the chunk where readback failed. Zero MiB means the allocation failed verification as a whole. The index identifies a location in the test buffer and cannot identify a defective physical HBM stack.</p>
+</details>
+<p><strong>Disabled versus defective.</strong> A disabled partition is excluded by the card’s configuration. Whether it would work is a separate question. CUDA cannot read an excluded partition, so this scan leaves its health unknown. It does not unlock units or produce a partition-by-partition defect map. <a href="https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/#floorsweeping">Kate’s explanation of floorsweeping</a></p>
+<h4>Where register captures come from</h4>
 <p>Kate’s <code>gpu0-capture</code> is a Rust library for the Linux computer with the GPU in its PCIe slot. It reads the card through BAR0, a window into GPU registers. The Pico’s USB cable plays no part in that read. Kate published the capture library without a command-line program for starting a live capture.</p>
 <p>A capture contains named register readings and two passes over the fuse rows. Kate’s <code>gpu0-analysis</code> library checks the register map and whether the passes agree. Our <code>ga100ctl capture review</code> command uses that library to read a saved file. <a href="https://github.com/kate-land/ga100vfi/tree/b71e3990cc652a07cdbb5c6d1192e3e8116692d2/gpu0-registers">Kate’s register tools</a></p>
 
