@@ -90,6 +90,25 @@ PY</code></pre>
 <p>A mismatch gives the starting index of the chunk where readback failed. Zero MiB means the allocation failed verification as a whole. The index identifies a location in the test buffer and cannot identify a defective physical HBM stack.</p>
 </details>
 <p><strong>Disabled versus defective.</strong> A disabled partition is excluded by the card’s configuration. Whether it would work is a separate question. CUDA cannot read an excluded partition, so this scan leaves its health unknown. It does not unlock units or produce a partition-by-partition defect map. <a href="https://blog.kate.land/posts/using-voltage-glitching-to-unlock-the-a100/#floorsweeping">Kate’s explanation of floorsweeping</a></p>
+<h4>Enable the published 64 GB or 40 GB software configuration</h4>
+<p>After saving a baseline, <a href="https://github.com/amoghmunikote/cmpunlocker">cmpunlocker</a> provides an independent software route: the 8 GB variant (PCI ID <code>10de:20c2</code>) targets 64 GiB and the 10 GB variant (<code>10de:2082</code>) targets 40 GiB. This route uses patched NVIDIA modules and does not require a Pico campaign or OTP fuse programming. It does not supply Kate’s die-specific 80 GB FF change. The target is a driver configuration; verify usable bytes on your own card after a cold power cycle.</p>
+<p>From a <strong>gpuglitch</strong> checkout on the GPU host, fetch the reviewed cmpunlocker revision and run our wrapper. It selects the single supported GPU by PCI ID, checks the checkout revision and clean state, records an event, then invokes cmpunlocker’s installer through <code>sudo</code>. If more than one NVIDIA GPU is visible, move the card to a dedicated host before using this command.</p>
+<pre><code>python3 -m venv .venv
+.venv/bin/python -m pip install .
+git clone https://github.com/amoghmunikote/cmpunlocker.git ../cmpunlocker
+git -C ../cmpunlocker checkout 2c7e2ecd7944e791fec040d2680036beb4a9327b
+.venv/bin/ga100ctl memory-enable --source ../cmpunlocker --confirm</code></pre>
+<div class="expected"><b>Expected result</b><p>On a successful installer exit, <code>ga100ctl</code> reports <code>pending_power_cycle</code> with an event ID and the target capacity, 65536 MiB or 40960 MiB according to PCI ID. This illustrative excerpt is for a <code>10de:20c2</code> card; it is not a measured capacity.</p>
+<pre><code>{
+  "event_id": 17,
+  "state": "pending_power_cycle",
+  "result": {
+    "method": "cmpunlocker",
+    "expected_driver_memory_mib_after_boot": 65536
+  }
+}</code></pre>
+<p>The wrapper skips cmpunlocker’s IOMMU, boot service and VM passthrough setup. The installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules, and writes <code>/etc/modprobe.d/cmp-pcie-gen2.conf</code>; it may download matching driver sources. Review the installer before running it on a host with other workloads.</p></div>
+<p>Shut the GPU host down, remove card power, then power it back on. Run <code>.venv/bin/ga100ctl gpu inspect</code> and <code>.venv/bin/ga100ctl memory-check</code> from gpuglitch afterward. Compare the new driver total and the verified readback range with the baseline; a reported 64 or 40 GiB alone does not establish that every address works. The <code>--profile</code> flag in cmpunlocker’s own installer changes metadata, not the geometry selected from the PCI ID.</p>
 <h4>Where register captures come from</h4>
 <p>Kate’s <code>gpu0-capture</code> is a Rust library for the Linux computer with the GPU in its PCIe slot. It reads the card through BAR0, a window into GPU registers. The Pico’s USB cable plays no part in that read. Kate published the capture library without a command-line program for starting a live capture.</p>
 <p>A capture contains named register readings and two passes over the fuse rows. Kate’s <code>gpu0-analysis</code> library checks the register map and whether the passes agree. Our <code>ga100ctl capture review</code> command uses that library to read a saved file. <a href="https://github.com/kate-land/ga100vfi/tree/b71e3990cc652a07cdbb5c6d1192e3e8116692d2/gpu0-registers">Kate’s register tools</a></p>

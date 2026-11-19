@@ -24,7 +24,7 @@ ga100ctl pico list
 ga100ctl gpu list
 ```
 
-Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.3.0-py3-none-any.whl`.
+Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.4.0-py3-none-any.whl`.
 
 ## Check usable memory
 
@@ -37,6 +37,18 @@ On the GPU host, with CUDA-enabled PyTorch installed in the CLI's Python environ
 The command discovers CMP 170HX cards, checks them one at a time, and saves a baseline and result for each. The summary pairs driver-reported capacity with the size of the allocation that passed readback. It also shows changes in DRAM error counters and the negotiated PCIe link. An 80 GB claim needs evidence from that card. A passing test covers the bytes exercised, and the command leaves GPU memory headroom for the driver and verification work.
 
 Add `--gpu BDF_OR_UUID` to select one device or `--memory-mib 1024` to request an exact test size. Use `ga100ctl --json memory-check` for the full per-card evidence. The check exercises the current configuration through CUDA. [Sizing and interpretation](docs/benchmarking.md#automatic-memory-check)
+
+## Enable the published software memory configuration
+
+For a host with exactly one NVIDIA GPU, the `memory-enable` command runs a pinned, clean checkout of [cmpunlocker](https://github.com/amoghmunikote/cmpunlocker) and records the operation. PCI ID `10de:20c2` targets 64 GiB on the nominal 8 GB variant; `10de:2082` targets 40 GiB on the nominal 10 GB variant. This does not program FF records or provide the die-specific 80 GiB route described by Kate. Take a `gpu inspect` and `memory-check` baseline first.
+
+```sh
+git clone https://github.com/amoghmunikote/cmpunlocker.git ../cmpunlocker
+git -C ../cmpunlocker checkout 2c7e2ecd7944e791fec040d2680036beb4a9327b
+.venv/bin/ga100ctl memory-enable --source ../cmpunlocker --confirm
+```
+
+The command prompts for `sudo` as needed. It passes cmpunlocker's `--no-iommu --no-gen2-service --no-passthrough` options, but the installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules and writes a PCIe Gen2 modprobe setting. A successful exit means installation is pending a cold power cycle, not that capacity has been measured. Shut the host down, remove GPU power, restart, then run `ga100ctl gpu inspect` and `ga100ctl memory-check` to compare reported capacity and tested readback with the baseline. The installer may need network access to download matching NVIDIA source. Its `--profile` flag changes metadata; runtime geometry follows the card's PCI ID. [Method and limitations](docs/unlocking.md#published-software-memory-route)
 
 ## PCIe, NVLink and saved captures
 
@@ -80,7 +92,7 @@ The default database is `$XDG_STATE_HOME/ga100ctl/history.sqlite3`, falling back
 | CUDA validation | Implemented CUDA initialization, SM count, visible capacity, allocation integrity, timed compute stability, PCIe, NVLink and telemetry capture. | Real measurements on the selected GPU. |
 | Benchmarks | Implemented local PyTorch/Transformers, llama.cpp and two-GPU peer copy. Tested result parsing and failure handling. | Run the required backend with local models or an eligible pair of GPUs. vLLM remains planned. |
 
-The supplied firmware identifies itself over USB and leaves the GPIOs unused. Voltage-glitch control, deployment of unlock firmware, raw fuse inspection and fuse programming are outside the implemented command set. No result here establishes an unlock or a maximum configuration for any card.
+The supplied firmware identifies itself over USB and leaves the GPIOs unused. Voltage-glitch control, deployment of unlock firmware, raw fuse inspection and fuse programming are outside the implemented command set. `memory-enable` wraps a separate published software installer; it does not implement the Pico or Kate FF programming sequence. No result here establishes a maximum configuration for any card.
 
 ## Project guide
 

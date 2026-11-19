@@ -1,6 +1,6 @@
 ---
 name: ga100-inspect
-description: Use ga100ctl to inspect a Linux GPU, check reported PCIe and NVLink status, record or compare observations, and review saved Kate GA100 captures offline.
+description: Use ga100ctl to inspect a Linux GPU, check reported PCIe and NVLink status, record or compare observations, review saved Kate GA100 captures offline, and guide the published software memory profile when authorized.
 ---
 
 Run `ga100ctl` after installation, or `python3 -m ga100ctl` from the gpuglitch checkout. Global options such as `--db PATH`, `--json`, and `--simulate` go before the subcommand.
@@ -13,6 +13,15 @@ For a memory survey, use `ga100ctl --json memory-check`. It discovers CMP 170HX 
 2. For a baseline, run `ga100ctl gpu inspect --gpu "$gpu"` with the selected address or UUID in `gpu`. Keep its card ID and event ID. Use an operator-provided `--asset-tag` when serial and UUID are unavailable. A PCI slot can be reused by a different card.
 3. For interconnect status, run `ga100ctl gpu links --gpu "$gpu"`. Report the negotiated speed and width alongside the maximums. Preserve any unavailable readings. Driver link status and measured transfer throughput answer different questions.
 4. For a recorded workload or capacity check, consult `ga100ctl validate --help` and report the tested allocation in MiB. A driver capacity reading alone does not establish how many bytes passed a write and readback test. Use `ga100ctl --json report --card "$card_id"` for saved evidence and `ga100ctl compare LEFT_EVENT RIGHT_EVENT` for events of the same kind.
+
+## Published software memory profile
+
+For a CMP 170HX host with exactly one NVIDIA GPU, `ga100ctl memory-enable --source ../cmpunlocker --confirm` invokes the published [cmpunlocker](https://github.com/amoghmunikote/cmpunlocker/tree/2c7e2ecd7944e791fec040d2680036beb4a9327b) installer from a clean checkout at commit `2c7e2ecd7944e791fec040d2680036beb4a9327b`. PCI ID `10de:20c2` selects the 64 GiB target (65536 MiB); `10de:2082` selects 40 GiB (40960 MiB). The installer selects geometry by PCI ID. Its `--profile` option changes metadata only. This route does not require a Pico glitch and does not program FF records or implement Kate's die-specific 80 GiB process.
+
+1. Record a per-card baseline with `ga100ctl gpu inspect` and `ga100ctl memory-check`. Check the PCI ID, driver capacity, tested allocation and any ECC readings. Identify the target host and confirm the session authorizes changing its NVIDIA driver and PCIe configuration before using `--confirm`.
+2. Clone the upstream repository outside this checkout and check out the pinned commit. Review the source and verify the checkout is clean. Use `ga100ctl memory-enable --help` to review local prerequisites and the exact command behavior. Never run the installer as a discovery or verification step.
+3. When authorized, run `ga100ctl memory-enable --source ../cmpunlocker --confirm` on that GPU host. The wrapper passes `--no-iommu --no-gen2-service --no-passthrough`. These flags leave IOMMU kernel-command-line setup, the new Gen2 retrain service and VM passthrough setup out of this invocation. The installer still removes conflicting NVIDIA DKMS modules, builds and installs patched NVIDIA modules, writes `/etc/modprobe.d/cmp-pcie-gen2.conf` and removes legacy PCIe retrain helpers. It may download matching NVIDIA source. Review host impact before invocation.
+4. Preserve the command result and event ID. A `pending_power_cycle` result records installer completion, not working memory. After an authorized shutdown and full card power removal, compare `gpu inspect` and `memory-check` with the baseline. Report driver-reported capacity and verified readback range separately. Do not claim 64 GiB or 40 GiB is usable based only on installation or a capacity label.
 
 ## Review a saved Kate capture
 

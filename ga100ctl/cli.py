@@ -1,12 +1,15 @@
 """Ubuntu CLI for USB provisioning, PCI inventory and GPU workloads."""
 import argparse
+import hashlib
 import json
 import os
+import signal
 import shutil
 import sqlite3
 import subprocess
 import sys
 import sysconfig
+import threading
 from contextlib import closing
 from functools import partial
 from importlib.resources import files
@@ -14,6 +17,11 @@ from pathlib import Path
 
 from . import __version__, gpu, pico, workloads
 from .history import History, identifier
+
+
+CMPUNLOCKER_COMMIT = "2c7e2ecd7944e791fec040d2680036beb4a9327b"
+CMPUNLOCKER_MEMORY_MIB = {"20c2": 65536, "2082": 40960}
+CMPUNLOCKER_FLAGS = ("--no-iommu", "--no-gen2-service", "--no-passthrough")
 
 
 def parser():
@@ -51,6 +59,10 @@ def parser():
     memory = commands.add_parser("memory-check", help="discover CMP 170HX cards and test exposed GPU memory")
     memory.add_argument("--gpu", help="test only this NVIDIA GPU (full PCI address or UUID)")
     memory.add_argument("--memory-mib", type=int, help="test this many MiB instead of sizing from free memory")
+    enable = commands.add_parser("memory-enable", help="install pinned cmpunlocker software memory profile")
+    enable.add_argument("--source", type=Path, required=True, help="clean cmpunlocker checkout at the pinned revision")
+    enable.add_argument("--gpu", help="full PCI address or UUID of the only visible NVIDIA GPU")
+    enable.add_argument("--confirm", action="store_true", help="authorize host driver and PCIe configuration changes")
     validate = commands.add_parser("validate", help="exercise a bounded allocation and optionally run compute")
     validate.add_argument("--gpu", required=True)
     validate.add_argument("--memory-mib", type=int, default=64)
@@ -212,6 +224,123 @@ def scan_memory(args, cards, history):
     return {"state": state, "cards": runs}
 
 
+def _cmpunlocker_source(path):
+    source = path.resolve(strict=True)
+    if not source.is_dir() or not (source / "install.sh").is_file():
+        raise ValueError("--source must be the cmpunlocker checkout containing install.sh")
+
+    def git(*arguments):
+        result = subprocess.run(["git", "-C", str(source), *arguments],
+                                capture_output=True, text=True, check=True, timeout=15)
+        return result.stdout.strip()
+
+    try:
+        if Path(git("rev-parse", "--show-toplevel")).resolve() != source:
+            raise ValueError("--source must name the repository root")
+        revision = git("rev-parse", "HEAD")
+        if revision != CMPUNLOCKER_COMMIT:
+            raise ValueError(f"cmpunlocker must be at pinned commit {CMPUNLOCKER_COMMIT}")
+        if git("status", "--porcelain=v1", "--untracked-files=all"):
+            raise ValueError("cmpunlocker checkout has local changes or untracked files")
+    except subprocess.CalledProcessError as exc:
+        raise ValueError(f"cannot verify cmpunlocker checkout: {exc.stderr.strip()}") from exc
+    return source, hashlib.sha256((source / "install.sh").read_bytes()).hexdigest()
+
+
+def _run_installer(command, source, timeout=1800):
+    """Show a long installer on stderr while retaining a bounded journal excerpt."""
+    output_tail = ""
+    log_directory = source / "logs"
+    previous_logs = {path.name: (path.stat().st_mtime_ns, path.stat().st_size)
+                     for path in log_directory.glob("install_*.log")}
+    timed_out = False
+    announced_log = None
+    with subprocess.Popen(command, cwd=source, stdout=subprocess.PIPE,
+                          stderr=subprocess.STDOUT, text=True, errors="replace", bufsize=1,
+                          preexec_fn=os.setpgrp) as process:
+        stream = sys.stderr
+
+        def forward_output():
+            nonlocal output_tail, announced_log
+            for line in process.stdout:
+                print(line, end="", file=stream, flush=True)
+                output_tail = (output_tail + line)[-4000:]
+                if line.startswith("Log saved to: "):
+                    announced_log = line.removeprefix("Log saved to: ").strip()
+
+        reader = threading.Thread(target=forward_output, daemon=True)
+        reader.start()
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+        reader.join(timeout=5)
+        if reader.is_alive():
+            process.stdout.close()
+            reader.join(timeout=1)
+        returncode = process.returncode
+
+    # The upstream installer writes a complete log under the checkout even
+    # when it stops before printing its final "Log saved to" line.
+    new_logs = [path for path in log_directory.glob("install_*.log")
+                if previous_logs.get(path.name) != (path.stat().st_mtime_ns, path.stat().st_size)]
+    newest_log = max(new_logs, key=lambda path: path.stat().st_mtime, default=None)
+    return {"returncode": returncode, "output_tail": output_tail,
+            "timed_out": timed_out,
+            "log_path": announced_log or (str(newest_log) if newest_log else None)}
+
+
+def enable_memory(args, cards, history):
+    if len(cards) != 1:
+        raise ValueError("memory-enable requires exactly one visible NVIDIA GPU because cmpunlocker changes host-wide driver settings")
+    card = select(cards, args.gpu)
+    if card.get("vendor_id") != "10de" or card.get("device_id") not in CMPUNLOCKER_MEMORY_MIB:
+        raise ValueError("memory-enable supports only CMP 170HX PCI IDs 10de:20c2 and 10de:2082")
+    source, installer_sha256 = _cmpunlocker_source(args.source)
+    expected_mib = CMPUNLOCKER_MEMORY_MIB[card["device_id"]]
+    command = ["sudo", "-n", "bash", str(source / "install.sh"), *CMPUNLOCKER_FLAGS]
+    inputs = {"target_bdf": card["bdf"], "target_uuid": card.get("uuid"),
+              "pci_id": "10de:" + card["device_id"], "source": str(source),
+              "source_commit": CMPUNLOCKER_COMMIT, "installer_sha256": installer_sha256,
+              "installer_flags": list(CMPUNLOCKER_FLAGS)}
+
+    def install():
+        # Authenticate while this process still owns the operator's terminal.
+        # The long-running installer gets a separate process group so a timeout
+        # can stop its child build commands. It retains the controlling TTY,
+        # which keeps sudo's terminal-scoped authentication ticket usable.
+        try:
+            auth = subprocess.run(["sudo", "-v"], check=False, timeout=120)
+        except subprocess.TimeoutExpired:
+            return {"status": "failed", "method": "cmpunlocker", "sudo_auth_exit_code": None,
+                    "detail": "Sudo authentication timed out; installer did not start."}
+        if auth.returncode:
+            return {"status": "failed", "method": "cmpunlocker",
+                    "sudo_auth_exit_code": auth.returncode,
+                    "detail": "Sudo authentication failed; installer did not start."}
+        result = _run_installer(command, source)
+        report = {"method": "cmpunlocker", "source_commit": CMPUNLOCKER_COMMIT,
+                  "installer_sha256": installer_sha256, "installer_exit_code": result["returncode"],
+                  "sudo_auth_exit_code": auth.returncode,
+                  "expected_driver_memory_mib_after_boot": expected_mib,
+                  "host_changes": ["NVIDIA kernel modules", "PCIe Gen2 modprobe setting"],
+                  "installer_log": result["log_path"],
+                  "installer_output_tail": result["output_tail"]}
+        if result["timed_out"]:
+            return dict(report, status="failed", detail="Installer timed out and was stopped. Host changes may be partial; inspect its log before retrying.")
+        if result["returncode"]:
+            return dict(report, status="failed", detail="Installer failed. Host changes may be partial; inspect its log before retrying.")
+        return dict(report, status="pending_power_cycle",
+                    detail="Installer finished. Perform a cold power cycle, then run ga100ctl memory-check to measure usable memory.")
+
+    return {"source": "live", **run_event(history, "memory-enable", inputs, install, card)}
+
+
 def execute(args):
     scope = "fixture-v1" if args.simulate else "live"
     fixture = json.loads(files("ga100ctl").joinpath("simulated.json").read_text()) if args.simulate else {}
@@ -235,6 +364,11 @@ def execute(args):
         raise ValueError("The USB fixture supports discovery. Provisioning uses real build artifacts.")
     if cmd == "pico" and args.action == "flash" and not args.confirm:
         raise ValueError("Replacing the device image requires --confirm")
+    if cmd == "memory-enable":
+        if args.simulate:
+            raise ValueError("memory-enable requires a real GPU host")
+        if not args.confirm:
+            raise ValueError("Changing the host driver requires --confirm")
 
     state_dir = Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
     db = args.db or state_dir / "ga100ctl/history.sqlite3"
@@ -255,6 +389,8 @@ def execute(args):
         if cmd == "pico":
             return dict(source=scope, **provision(args, history))
         cards = gpus()
+        if cmd == "memory-enable":
+            return enable_memory(args, cards, history)
         if cmd == "memory-check":
             return dict(source=scope, **scan_memory(args, cards, history))
         if cmd == "gpu":
