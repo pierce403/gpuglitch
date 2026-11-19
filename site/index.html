@@ -56,8 +56,20 @@ PY</code></pre>
 <section id="defects" class="panel">
 <p class="kicker">08 / 12 · GPU inspection</p>
 <h3 tabindex="-1">Inspect the card and read a capture</h3>
-<h4>What a memory scan looks like</h4>
-<p>Floorsweeping determines which hardware units the GPU exposes. Defragmenting rearranges stored data. <code>ga100ctl memory-check</code> leaves the hardware configuration in place and tests a CUDA allocation. It writes a different value at each word address before reading the allocation back, so it can detect when two addresses unexpectedly refer to the same storage.</p>
+<h4>Check how much memory your card can use</h4>
+<p>On the host with the 170HX installed, run this from the gpuglitch checkout with CUDA-enabled PyTorch in the project environment. The command finds the card automatically and tests the memory CUDA can currently allocate. Neither this check nor a successful Pico campaign enables additional HBM by itself.</p>
+<pre><code>.venv/bin/ga100ctl memory-check</code></pre>
+<div class="expected"><b>Illustrative output for a card already reporting 80 GiB</b>
+<p>This is the live command’s output format with invented readings. It is not a measurement from this project’s card.</p>
+<pre><code>Memory check (live)  passed
+
+0000:41:00.0  passed  event #2
+  Driver total  81920.0 MiB
+  Verified allocation  76800 MiB
+  DRAM ECC change  corrected 0 / uncorrected 0
+  PCIe  8.0 GT/s PCIe  width 16</code></pre>
+<p>Here the driver reports 80 GiB and 75 GiB passed every write and readback pattern. The other 5 GiB was outside the test allocation. Some memory can already be in use, and the tool reserves headroom. If the driver still exposes 8 GiB, this command can test only within that range.</p></div>
+<details><summary>Run the 8 GB simulation without a GPU</summary>
 <p>Try the 8&nbsp;GB example from the gpuglitch checkout. The PCI address selects one of the bundled simulated cards. This command runs without a Pico or GPU.</p>
 <pre><code>.venv/bin/ga100ctl --simulate memory-check --gpu 0000:41:00.0</code></pre>
 <div class="expected"><b>Actual output from the simulation</b>
@@ -70,13 +82,9 @@ PY</code></pre>
   PCIe  2.5 GT/s PCIe  width 4
   Fixture only. No memory tested.</code></pre>
 <p>The event number depends on the local history. The 8192 MiB comes from the fixture. “Verified allocation” stays unavailable because the simulation never allocates GPU memory.</p></div>
-<details><summary>How would a passing or failed readback look?</summary>
-<p>These excerpts use invented measurements to illustrate two outcomes on a card whose driver reports 80 GiB.</p>
-<p><strong>Passing allocation</strong></p>
-<pre><code>  Driver total  81920.0 MiB
-  Verified allocation  76800 MiB</code></pre>
-<p>75 GiB passed every pattern. The remaining 5 GiB was outside this allocation. Some memory may already be in use, and the tool reserves headroom.</p>
-<p><strong>Address mismatch</strong></p>
+</details>
+<details><summary>What if memory readback fails?</summary>
+<p>The test writes a different value at each word address before reading the allocation back. If two addresses refer to the same storage, the report can show a mismatch like this illustrative excerpt.</p>
 <pre><code>  Verified allocation  0 MiB
   address-pattern mismatch at chunk starting at word 262144</code></pre>
 <p>A mismatch gives the starting index of the chunk where readback failed. Zero MiB means the allocation failed verification as a whole. The index identifies a location in the test buffer and cannot identify a defective physical HBM stack.</p>
