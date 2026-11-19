@@ -1,12 +1,21 @@
 # GA100 bench checklist
 
-The Pico 2 W boots the USB diagnostic image. The next bench checks are USB discovery after a cold reconnect and the first CMP 170HX baseline on a GPU host. Update the checkboxes as evidence arrives. Summarize each day's work in [the daily logs](logs/).
+The Pico 2 W now runs the pinned upstream GA100 glitch firmware. USB serial and I2C communication have been observed on the GPU host, but a working Goldilocks waveform has not been established for this card. Update the checkboxes as evidence arrives. Summarize each day's work in [the daily logs](logs/) and the [current CMP handoff](runs/2026-11-18-cmp170hx-handoff.md).
 
 ## Pico on the USB bench
 
 - [x] Operator confirmed the attached board is a Pico 2 W. Verified the `pico2_w` USB diagnostic UF2 against its manifest, current sources and recorded build hash. [Bench log](logs/2026-11-18.md#pico-2-w-flash-preparation)
 - [x] Installed the selected Pico 2 W image. Flash event 2 returned `runtime_verified`, and a separate USB inspection confirmed firmware 1.0.0. [Installation record](logs/2026-11-18.md#pico-2-w-installation)
-- [ ] Disconnect and reconnect the Pico normally. Verify that `ga100ctl pico list` still shows the same serial, expected build target and compatible firmware. Record the outcome in that day's log.
+- [x] After a cold reconnect on the GPU host, the Pico enumerated as USB CDC with the same serial and responded to `v`; `@s` found the card's I2C devices. The installed glitch firmware is not the earlier `ga100ctl` diagnostic image.
+
+## Glitch waveform measurement and safety
+
+- [ ] Verify a safe NVVDD measurement point and card ground before attaching a probe or ADC wire. For this Pico 2 W's RP2350A build, connect the optional NVVDD sense wire to GP26 only after confirming the point and voltage range. Keep the existing GP0/GP1 I2C and GP22 PEX_RST connections identified separately. [Upstream pin map](https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/BUILD.md)
+- [ ] Build and flash the upstream `DEBUG=ON`, `BOARD_RP2350A=ON`, `PICO_BOARD=pico2_w` firmware. Confirm its 400 MHz banner and `v` output, then capture the NVVDD ADC trace with `y`. Check that the debug build's waveform actuation matches the normal build before using it for calibration. [Debug build](https://github.com/dalzyu/pico-ga100vfi/blob/e1ebd972f28ebd621c483a6c8d9f0ab69b3ba73c/docs/BUILD.md)
+- [ ] On a clean cold boot, capture one guarded attempt with enough pre-trigger and post-trigger samples to measure all three NVVDD dips relative to the firmware's PEX_RST release time. Record minimum voltage, actual dip width, spacing and recovery, alongside the commanded `v_dip`, `pw`, `gap`, `delay`, `v_restore` and the post-attempt DSOV, CRC, privilege mask and live PCI ID.
+- [ ] If an oscilloscope or logic analyzer is available, measure NVVDD and the physical PEX_RST_BUF* net together, triggered on reset release; add SDA/SCL to correlate PMBus writes with rail response. The Pico ADC trace alone cannot independently verify the reset wire or decode I2C.
+- [ ] Before each attempt, require the CMP's exact live PCI ID, active runtime power state, readable BAR0, and completed GFW boot status. Stop after the first failed check; never count a non-`0xffffffff` PCI config value alone as a healthy endpoint. Confirm the voltage controller returns to PWM-VID after every attempt. Preserve the guard and raw observations with the campaign record.
+- [ ] Diagnose why the CMP has entered an invalid live PCI state after a single dip even though a stock-voltage PEX_RST pulse preserves its PCI ID. Investigate the separate GSP initialization failure seen on one cold boot before expanding a campaign. Do not infer that a voltage profile is transferable from the upstream author's card.
 
 ## First CMP 170HX intake and validation
 
