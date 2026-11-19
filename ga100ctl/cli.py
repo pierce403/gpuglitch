@@ -1,8 +1,10 @@
 """Ubuntu CLI for USB provisioning, PCI inventory and GPU workloads."""
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import os
+import runpy
 import signal
 import shutil
 import sqlite3
@@ -70,6 +72,20 @@ def parser():
     enable.add_argument("--confirm", action="store_true", help="authorize host driver and PCIe configuration changes")
     ff = commands.add_parser("memory-ff", help="review or program card-specific fuseless-fuse records")
     ff_actions = ff.add_subparsers(dest="action", required=True)
+    ff_plan = ff_actions.add_parser("plan", help="generate a memory-only FF plan from a saved raw capture")
+    ff_plan.add_argument("--source", type=Path, required=True, help="clean ga100-ff-tools checkout at the pinned revision")
+    ff_plan.add_argument("--baseline", type=Path, required=True, help="complete normal-boot raw capture")
+    ff_plan.add_argument("--output", type=Path, required=True, help="new JSON plan path")
+    ff_simulate = ff_actions.add_parser("simulate", help="replay a saved FF plan offline without hardware access")
+    ff_simulate.add_argument("--source", type=Path, required=True, help="clean ga100-ff-tools checkout at the pinned revision")
+    ff_simulate.add_argument("--baseline", type=Path, required=True, help="raw capture used for the plan")
+    ff_simulate.add_argument("--plan", type=Path, required=True, help="saved FF plan to regenerate and replay")
+    ff_simulate.add_argument("--output", type=Path, required=True, help="new JSON simulation path")
+    ff_verify = ff_actions.add_parser("verify", help="compare a fresh normal-boot raw capture with a reviewed FF plan")
+    ff_verify.add_argument("--source", type=Path, required=True, help="clean ga100-ff-tools checkout at the pinned revision")
+    ff_verify.add_argument("--baseline", type=Path, required=True, help="normal-boot raw capture used for the plan")
+    ff_verify.add_argument("--plan", type=Path, required=True, help="reviewed memory-only FF plan")
+    ff_verify.add_argument("--post", type=Path, required=True, help="fresh post-power-cycle normal-boot raw capture")
     burn = ff_actions.add_parser("burn", help="invoke the pinned upstream FF burner interactively")
     burn.add_argument("--source", type=Path, required=True, help="clean ga100-ff-tools checkout at the pinned revision")
     burn.add_argument("--baseline", type=Path, required=True, help="raw capture used to create the plan")
@@ -383,6 +399,201 @@ def _ff_tools_source(path):
     return source, hashes
 
 
+def prepare_ff_offline(args):
+    """Delegate memory-only planning and replay to the pinned upstream planner."""
+    source, hashes = _ff_tools_source(args.source)
+    baseline = args.baseline.resolve(strict=True)
+    if not baseline.is_file():
+        raise ValueError("--baseline must be an existing raw capture file")
+    output = args.output.absolute()
+    if output.exists() or output.is_symlink():
+        raise ValueError("--output must name a new file; existing evidence is never overwritten")
+    if not output.parent.is_dir():
+        raise ValueError("--output parent directory must already exist")
+
+    command = [sys.executable, "-I", "-S", str(source / "ffplan.py3")]
+    command.extend([args.action, "--baseline", str(baseline)])
+    manifest = None
+    if args.action == "plan":
+        command.extend(["--changes", "memory", "--route", "cmp", "--output", str(output)])
+    else:
+        plan = args.plan.resolve(strict=True)
+        if not plan.is_file():
+            raise ValueError("--plan must be an existing FF plan file")
+        try:
+            manifest = json.loads(plan.read_text())
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"Cannot read FF plan JSON: {exc}") from exc
+        if (not isinstance(manifest, dict) or manifest.get("features") != ["memory"]
+                or manifest.get("route") != "cmp" or manifest.get("public_sources_only") is not True):
+            raise ValueError("memory-ff simulate accepts only a public memory-only CMP plan")
+        command.extend(["--plan", str(plan)])
+    try:
+        result = subprocess.run(command, capture_output=True, text=True,
+                                check=False, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("FF planning exceeded 120 seconds; inspect the output before retrying") from exc
+
+    if args.action == "plan":
+        if result.returncode not in (0, 2) or not output.is_file():
+            raise RuntimeError(f"FF planner failed (exit {result.returncode}): {result.stderr[-2000:].strip()}")
+        try:
+            data = json.loads(output.read_text())
+        except (UnicodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"FF planner output is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("FF planner output must be a JSON object")
+        complete = (result.returncode == 0 and data.get("status") == "logical-plan-complete")
+        incomplete = (result.returncode == 2 and data.get("status") == "incomplete")
+        if (not (complete or incomplete) or data.get("features") != ["memory"]
+                or data.get("route") != "cmp" or data.get("public_sources_only") is not True):
+            raise RuntimeError("FF planner returned an inconsistent memory-only result")
+        return {"source": "offline", "action": "plan",
+                "state": "logical-plan-complete" if complete else "incomplete",
+                "source_commit": FF_TOOLS_COMMIT, "planner_sha256": hashes["ffplan.py3"],
+                "baseline": str(baseline), "output": str(output), "plan_id": data.get("plan_id"),
+                "record_count": len(data.get("records") or []),
+                "missing_evidence": data.get("missing_evidence") or []}
+
+    if result.returncode:
+        raise RuntimeError(f"FF simulation failed (exit {result.returncode}): {result.stderr[-2000:].strip()}")
+    try:
+        data = json.loads(result.stdout)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"FF simulation output is not valid JSON: {exc}") from exc
+    if (not isinstance(data, dict) or data.get("simulation_only") is not True
+            or data.get("plan_id") != manifest.get("plan_id")
+            or data.get("records_applied") != len(manifest.get("records") or [])):
+        raise RuntimeError("FF simulation result did not match the selected plan")
+    with output.open("x") as stream:
+        json.dump(data, stream, indent=2)
+        stream.write("\n")
+    return {"source": "offline", "action": "simulate", "state": "logical-replay-complete",
+            "source_commit": FF_TOOLS_COMMIT, "planner_sha256": hashes["ffplan.py3"],
+            "baseline": str(baseline), "plan": str(plan), "output": str(output),
+            "plan_id": data["plan_id"], "records_applied": data["records_applied"],
+            "cold_boot_verified": False, "working_features_verified": False}
+
+
+def _ff_raw_evidence(path, read_evidence):
+    """Require a complete pinned-capture raw dump and retain its UUID provenance."""
+    capture = json.loads(path.read_text())
+    if not isinstance(capture, dict) or capture.get("schema") != "ga100-public-capture-v1":
+        raise ValueError("FF verification requires ga100-ff-tools raw capture v1 files")
+    flags = ("complete", "ok", "non_programming", "raw_requested", "physical_rows_captured",
+             "options_match", "raw_match", "raw_address_restored")
+    if any(capture.get(flag) is not True for flag in flags):
+        raise ValueError("FF verification requires complete matching raw and option passes")
+    if capture.get("pci_vendor") != "0x10de" or capture.get("pci_device") != "0x20c2":
+        raise ValueError("FF verification requires normal-boot NVIDIA CMP 170HX captures (10de:20c2)")
+    observation = capture.get("gpu_uuid_observation")
+    if not isinstance(observation, dict):
+        raise ValueError("Capture has no GPU UUID provenance")
+    provenance = observation.get("source")
+    live_verified = observation.get("live_verified")
+    if not ((provenance == "NVIDIA per-BDF information file" and live_verified is True)
+            or (provenance == "user-supplied BDF mapping" and live_verified is False)):
+        raise ValueError("Capture has inconsistent GPU UUID provenance")
+    evidence = read_evidence(path)
+    if (evidence.get("schema") != "raw_rows" or evidence.get("options_repeated") is not True
+            or evidence.get("rows_repeated") is not True or len(evidence.get("rows") or {}) != 512):
+        raise ValueError("FF verification requires two matching complete 512-row passes")
+    options = capture["options"][0]
+    def status_word(name):
+        value = options.get(name)
+        value = int(value, 0) if isinstance(value, str) else value
+        if type(value) is not int or not 0 <= value <= 0xffffffff:
+            raise ValueError(f"Capture lacks a valid {name} status word")
+        return value
+    control = status_word("FUSECTRL")
+    if (status_word("DISABLE_SW_OVERRIDE_STATUS") != 1
+            or status_word("EN_SW_OVERRIDE") != 0 or status_word("FUSEDEBUG") != 0
+            or (control >> 16) & 31 != 4 or control & 3 != 0):
+        raise ValueError("FF verification needs normal-boot fuse status without software override")
+    if evidence.get("uuid") is None or str(observation.get("value", "")).lower() != evidence["uuid"]:
+        raise ValueError("Capture needs a full GPU UUID matching its recorded provenance")
+    try:
+        captured_at = datetime.fromisoformat(capture["utc"].replace("Z", "+00:00"))
+        if captured_at.utcoffset() is None:
+            raise ValueError("Capture timestamp needs a timezone")
+    except (KeyError, AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("Capture needs a valid timezone-aware UTC timestamp") from exc
+    return evidence, {"captured_at": captured_at, "uuid_source": provenance,
+                      "uuid_live_verified": live_verified, "host_boot_id": capture.get("boot_id")}
+
+
+def verify_ff_offline(args):
+    """Compare exact planned FF words and published shadows after an operator power cycle."""
+    source, hashes = _ff_tools_source(args.source)
+    baseline, plan, post = (path.resolve(strict=True) for path in
+                            (args.baseline, args.plan, args.post))
+    if len({baseline, plan, post}) != 3 or any(not path.is_file() for path in (baseline, plan, post)):
+        raise ValueError("--baseline, --plan and --post must be three different existing files")
+    manifest = json.loads(plan.read_text())
+    if (not isinstance(manifest, dict) or manifest.get("schema") != "ga100-public-ff-plan-v2"
+            or manifest.get("status") != "logical-plan-complete"
+            or manifest.get("features") != ["memory"] or manifest.get("route") != "cmp"
+            or manifest.get("public_sources_only") is not True
+            or not isinstance(manifest.get("records"), list) or not manifest["records"]):
+        raise ValueError("FF verification requires a complete public memory-only CMP plan with records")
+    command = [sys.executable, "-I", "-S", str(source / "ffplan.py3"), "simulate",
+               "--baseline", str(baseline), "--plan", str(plan)]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, check=False, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("FF plan regeneration exceeded 120 seconds") from exc
+    if result.returncode:
+        raise ValueError(f"FF plan did not regenerate against its baseline: {result.stderr[-2000:].strip()}")
+    replay = json.loads(result.stdout)
+    if (not isinstance(replay, dict) or replay.get("simulation_only") is not True
+            or replay.get("plan_id") != manifest.get("plan_id")
+            or replay.get("records_applied") != len(manifest["records"])
+            or not isinstance(replay.get("public_fields"), dict)):
+        raise RuntimeError("Pinned planner returned an inconsistent FF replay")
+
+    planner = runpy.run_path(str(source / "ffplan.py3"), run_name="ga100_ff_verify")
+    baseline_evidence, baseline_meta = _ff_raw_evidence(baseline, planner["read_evidence"])
+    post_evidence, post_meta = _ff_raw_evidence(post, planner["read_evidence"])
+    if (baseline_evidence["bdf"] != post_evidence["bdf"]
+            or baseline_evidence["bdf"] != manifest.get("bdf")
+            or baseline_evidence["uuid"] != post_evidence["uuid"]):
+        raise ValueError("Baseline, plan and post capture must match the same BDF and full GPU UUID")
+    if post_meta["captured_at"] <= baseline_meta["captured_at"]:
+        raise ValueError("Post capture must have a later UTC timestamp than the baseline")
+    before, after = baseline_evidence["rows"], post_evidence["rows"]
+    planned = {record["row"]: record["word"] for record in manifest["records"]}
+    planned_mismatches = [
+        {"row": row, "expected": f"0x{expected:08x}", "observed": f"0x{after[row]:08x}"}
+        for row, expected in sorted(planned.items()) if after[row] != expected
+    ]
+    unexpected_changes = [
+        {"row": row, "baseline": f"0x{before[row]:08x}", "observed": f"0x{after[row]:08x}"}
+        for row in range(512) if row not in planned and before[row] != after[row]
+    ]
+    option_mismatches = [
+        {"field": field, "expected": target, "observed": post_evidence["opts"].get(planner["option_name"](field))}
+        for field, target in sorted(replay["public_fields"].items())
+        if post_evidence["opts"].get(planner["option_name"](field)) != target
+    ]
+    observed = not (planned_mismatches or unexpected_changes or option_mismatches)
+    return {"source": "offline", "action": "verify",
+            "state": "ff-replay-observed" if observed else "ff-replay-mismatch",
+            "source_commit": FF_TOOLS_COMMIT, "planner_sha256": hashes["ffplan.py3"],
+            "baseline": str(baseline), "plan": str(plan), "post": str(post),
+            "plan_id": manifest["plan_id"], "bdf": baseline_evidence["bdf"],
+            "gpu_uuid": baseline_evidence["uuid"],
+            "identity_provenance": {"baseline": baseline_meta["uuid_source"],
+                                    "post": post_meta["uuid_source"]},
+            "host_boot_id_changed": (baseline_meta["host_boot_id"] != post_meta["host_boot_id"]
+                                     if baseline_meta["host_boot_id"] and post_meta["host_boot_id"] else None),
+            "planned_rows": len(planned), "planned_rows_matching": len(planned) - len(planned_mismatches),
+            "planned_row_mismatches": planned_mismatches,
+            "unexpected_changed_rows": unexpected_changes,
+            "memory_option_mismatches": option_mismatches,
+            "cold_boot_verified": False, "working_features_verified": False,
+            "verified_memory_mib": None}
+
+
 def _ff_burn_inputs(args, cards):
     bdf = gpu._bdf(args.bdf)
     if bdf is None:
@@ -484,7 +695,7 @@ def execute(args):
             raise ValueError("memory-enable requires a real GPU host")
         if not args.confirm:
             raise ValueError("Changing the host driver requires --confirm")
-    if cmd == "memory-ff":
+    if cmd == "memory-ff" and args.action == "burn":
         if args.simulate:
             raise ValueError("memory-ff burn requires a real GPU host")
         if not args.confirm_burn:
@@ -574,6 +785,18 @@ def show_report(data):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "memory-ff" and args.action in ("plan", "simulate"):
+            if args.simulate:
+                raise ValueError("memory-ff plan and simulate read the files you supply. Omit --simulate.")
+            data = prepare_ff_offline(args)
+            print(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False))
+            return 0 if data["state"] != "incomplete" else 1
+        if args.command == "memory-ff" and args.action == "verify":
+            if args.simulate:
+                raise ValueError("memory-ff verify reads the captures you supply. Omit --simulate.")
+            data = verify_ff_offline(args)
+            print(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False))
+            return 0 if data["state"] == "ff-replay-observed" else 1
         if args.command == "capture":
             if args.simulate:
                 raise ValueError("capture review reads the file you supply. Omit --simulate.")

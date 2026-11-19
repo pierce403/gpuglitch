@@ -284,6 +284,153 @@ class CliTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "script hashes differ"):
                     cli._ff_tools_source(source)
 
+    def test_ff_plan_runs_offline_memory_only_and_preserves_incomplete_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, baseline, output = root / "source", root / "capture.json", root / "plan.json"
+            source.mkdir()
+            baseline.write_text("{}")
+            hashes = {"ffplan.py3": "planner-hash", "ffburn.py3": "burner-hash"}
+            def run_planner(command, **_kwargs):
+                self.assertEqual(command[1:3], ["-I", "-S"])
+                self.assertEqual(command[4:6], ["plan", "--baseline"])
+                self.assertEqual(command[-6:], ["--changes", "memory", "--route", "cmp", "--output", str(output)])
+                output.write_text(json.dumps({"status": "incomplete", "features": ["memory"],
+                                              "route": "cmp", "public_sources_only": True,
+                                              "records": [], "plan_id": "id",
+                                              "missing_evidence": ["IFF boundary"]}))
+                return subprocess.CompletedProcess(command, 2, stdout="", stderr="")
+            with mock.patch.object(cli, "_ff_tools_source", return_value=(source, hashes)), \
+                 mock.patch.object(cli.gpu, "discover", side_effect=AssertionError("GPU access")), \
+                 mock.patch.object(cli.subprocess, "run", side_effect=run_planner) as runner:
+                result = self.invoke("memory-ff", "plan", "--source", str(source),
+                                     "--baseline", str(baseline), "--output", str(output),
+                                     simulate=False, code=1)
+                self.assertEqual(result["state"], "incomplete")
+                self.assertEqual(result["missing_evidence"], ["IFF boundary"])
+                self.assertEqual(result["record_count"], 0)
+                self.assertTrue(output.exists())
+                self.assertIn("new file", self.invoke("memory-ff", "plan", "--source", str(source),
+                                                    "--baseline", str(baseline), "--output", str(output),
+                                                    simulate=False, code=2))
+                runner.assert_called_once()
+            self.assertFalse(self.db.exists())
+
+    def test_ff_simulate_regenerates_memory_plan_offline_without_overwrite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, baseline, plan, output = (root / name for name in
+                                              ("source", "capture.json", "plan.json", "simulation.json"))
+            source.mkdir()
+            baseline.write_text("{}")
+            manifest = {"features": ["memory"], "route": "cmp", "public_sources_only": True,
+                        "plan_id": "reviewed-id", "records": [{"row": 300, "word": 123}]}
+            plan.write_text(json.dumps(manifest))
+            replay = {"simulation_only": True, "plan_id": "reviewed-id", "records_applied": 1,
+                      "cold_boot_verified": False, "working_features_verified": False}
+            hashes = {"ffplan.py3": "planner-hash", "ffburn.py3": "burner-hash"}
+            with mock.patch.object(cli, "_ff_tools_source", return_value=(source, hashes)), \
+                 mock.patch.object(cli.gpu, "discover", side_effect=AssertionError("GPU access")), \
+                 mock.patch.object(cli.subprocess, "run", return_value=subprocess.CompletedProcess(
+                     [], 0, stdout=json.dumps(replay), stderr="")) as runner:
+                result = self.invoke("memory-ff", "simulate", "--source", str(source),
+                                     "--baseline", str(baseline), "--plan", str(plan),
+                                     "--output", str(output), simulate=False)
+                self.assertEqual(result["state"], "logical-replay-complete")
+                self.assertEqual(result["records_applied"], 1)
+                self.assertEqual(json.loads(output.read_text()), replay)
+                self.assertIn("simulate", runner.call_args.args[0])
+                self.assertIn("new file", self.invoke("memory-ff", "simulate", "--source", str(source),
+                                                    "--baseline", str(baseline), "--plan", str(plan),
+                                                    "--output", str(output), simulate=False, code=2))
+                runner.assert_called_once()
+            self.assertFalse(self.db.exists())
+
+    def test_ff_verify_checks_post_boot_rows_shadows_and_identity_offline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, baseline, plan, post = (root / name for name in
+                                            ("source", "baseline.json", "plan.json", "post.json"))
+            source.mkdir()
+            uuid = "GPU-12345678-1234-5678-9abc-123456789abc"
+            before = [0] * 512
+            after = before.copy()
+            after[300] = 0x00010001
+
+            def capture(rows, time, boot, field):
+                options = {"CRC_STATUS": "0x55", "NV_FUSE_OPT_FBIO_DISABLE": field,
+                           "FUSECTRL": "0xe0040000", "FUSEDEBUG": "0x00000000",
+                           "DISABLE_SW_OVERRIDE_STATUS": "0x00000001",
+                           "EN_SW_OVERRIDE": "0x00000000"}
+                return {"schema": "ga100-public-capture-v1", "bdf": "0000:01:00.0",
+                        "pci_vendor": "0x10de", "pci_device": "0x20c2", "gpu_uuid": uuid,
+                        "gpu_uuid_observation": {"value": uuid, "source": "user-supplied BDF mapping",
+                                                 "live_verified": False},
+                        "utc": time, "boot_id": boot,
+                        "complete": True, "ok": True, "non_programming": True, "raw_requested": True,
+                        "physical_rows_captured": True, "options_match": True, "raw_match": True,
+                        "raw_address_restored": True, "options": [options, options.copy()],
+                        "raw_rows": [rows, rows.copy()]}
+
+            baseline.write_text(json.dumps(capture(before, "2026-11-18T10:00:00+00:00", "boot-1", 1)))
+            post_capture = capture(after, "2026-11-18T11:00:00+00:00", "boot-2", 0)
+            post.write_text(json.dumps(post_capture))
+            plan.write_text(json.dumps({"schema": "ga100-public-ff-plan-v2",
+                                        "status": "logical-plan-complete", "features": ["memory"],
+                                        "route": "cmp", "public_sources_only": True,
+                                        "bdf": "0000:01:00.0", "plan_id": "reviewed-id",
+                                        "records": [{"row": 300, "word": 0x00010001}]}))
+            replay = {"simulation_only": True, "plan_id": "reviewed-id", "records_applied": 1,
+                      "public_fields": {"FBIO_DISABLE": 0}}
+
+            def read_evidence(path):
+                raw = json.loads(path.read_text())
+                self.assertEqual(len(raw["options"]), 2)
+                self.assertEqual(raw["options"][0], raw["options"][1])
+                self.assertEqual(len(raw["raw_rows"]), 2)
+                self.assertTrue(all(len(p) == 512 for p in raw["raw_rows"]))
+                if raw["raw_rows"][0] != raw["raw_rows"][1]:
+                    raise ValueError("Raw passes disagree")
+                if raw["options"][0]["CRC_STATUS"] != "0x55":
+                    raise ValueError("CRC is not clean")
+                return {"schema": "raw_rows", "options_repeated": True, "rows_repeated": True,
+                        "bdf": raw["bdf"], "uuid": raw["gpu_uuid"].lower(),
+                        "rows": dict(enumerate(raw["raw_rows"][0])),
+                        "opts": {"NV_FUSE_OPT_FBIO_DISABLE": raw["options"][0]["NV_FUSE_OPT_FBIO_DISABLE"]}}
+
+            arguments = ("memory-ff", "verify", "--source", str(source), "--baseline", str(baseline),
+                         "--plan", str(plan), "--post", str(post))
+            with mock.patch.object(cli, "_ff_tools_source", return_value=(source, {"ffplan.py3": "hash"})), \
+                 mock.patch.object(cli.runpy, "run_path", return_value={
+                     "read_evidence": read_evidence, "option_name": lambda field: "NV_FUSE_OPT_" + field}), \
+                 mock.patch.object(cli.subprocess, "run", return_value=subprocess.CompletedProcess(
+                     [], 0, stdout=json.dumps(replay), stderr="")) as runner, \
+                 mock.patch.object(cli.gpu, "discover", side_effect=AssertionError("GPU access")):
+                result = self.invoke(*arguments, simulate=False)
+                self.assertEqual(result["state"], "ff-replay-observed")
+                self.assertEqual(result["planned_rows_matching"], 1)
+                self.assertTrue(result["host_boot_id_changed"])
+                self.assertIsNone(result["verified_memory_mib"])
+                self.assertEqual(runner.call_args.args[0][1:3], ["-I", "-S"])
+
+                post_capture["raw_rows"][0][300] = 0
+                post_capture["raw_rows"][1][300] = 0
+                post_capture["raw_rows"][0][310] = 5
+                post_capture["raw_rows"][1][310] = 5
+                post_capture["options"][0]["NV_FUSE_OPT_FBIO_DISABLE"] = 1
+                post_capture["options"][1]["NV_FUSE_OPT_FBIO_DISABLE"] = 1
+                post.write_text(json.dumps(post_capture))
+                mismatch = self.invoke(*arguments, simulate=False, code=1)
+                self.assertEqual(mismatch["state"], "ff-replay-mismatch")
+                self.assertEqual(mismatch["planned_row_mismatches"][0]["row"], 300)
+                self.assertEqual(mismatch["unexpected_changed_rows"][0]["row"], 310)
+                self.assertEqual(mismatch["memory_option_mismatches"][0]["field"], "FBIO_DISABLE")
+
+                post_capture["gpu_uuid_observation"]["value"] = "GPU-ffffffff-ffff-ffff-ffff-ffffffffffff"
+                post.write_text(json.dumps(post_capture))
+                self.assertIn("GPU UUID", self.invoke(*arguments, simulate=False, code=2))
+            self.assertFalse(self.db.exists())
+
     def test_installer_streams_to_stderr_and_retains_bounded_tail(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory)

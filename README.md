@@ -24,7 +24,7 @@ ga100ctl pico list
 ga100ctl gpu list
 ```
 
-Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.5.0-py3-none-any.whl`.
+Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.6.0-py3-none-any.whl`.
 
 ## Check usable memory
 
@@ -50,24 +50,110 @@ git -C ../cmpunlocker checkout 2c7e2ecd7944e791fec040d2680036beb4a9327b
 
 The command prompts for `sudo` as needed. It passes cmpunlocker's `--no-iommu --no-gen2-service --no-passthrough` options, but the installer still replaces NVIDIA kernel modules, removes conflicting NVIDIA DKMS modules and writes a PCIe Gen2 modprobe setting. A successful exit means installation is pending a cold power cycle, not that capacity has been measured. Shut the host down, remove GPU power, restart, then run `ga100ctl gpu inspect` and `ga100ctl memory-check` to compare reported capacity and tested readback with the baseline. The installer may need network access to download matching NVIDIA source. Its `--profile` flag changes metadata; runtime geometry follows the card's PCI ID. [Method and limitations](docs/unlocking.md#published-software-memory-route)
 
-## Append permanent memory FF records
+## Plan memory FF records before the Pico campaign
 
-The experimental [GA100 FF toolkit](https://github.com/kprinssu/ga100-ff-tools/tree/04573c9dbf82997fb481f26769ec58dc625d8318) publishes a per-card capture, planner and guarded OTP burner. `ga100ctl memory-ff burn` invokes that burner from a clean checkout at the reviewed commit; it does not copy its unlicensed source into gpuglitch. The upstream burner has synthetic I/O tests but no published real-GPU validation. Its live path supports the nominal 8 GB `20c2` card and glitch identity `2080`, not the `2082` 10 GB variant.
+The experimental [GA100 FF toolkit](https://github.com/kprinssu/ga100-ff-tools/tree/04573c9dbf82997fb481f26769ec58dc625d8318) publishes a per-card capture, planner and guarded OTP burner. gpuglitch uses a clean external checkout at that exact commit; it does not copy the upstream source. The toolkit's live path supports the nominal 8 GB `20c2` card and glitch identity `2080`, not the `2082` 10 GB variant.
 
-First capture a normal `20c2` boot with the driver unbound and PCI memory decoding enabled. Generate a **memory-only** plan, simulate it and review every defect mask, FF block and blank append row. The Pico campaign does not by itself establish the burn window. Before programming, the operator must establish and maintain the required `SENSE_CTRL`, override, security/PLM state and any qualified external programming supply. The burner checks those register values, but never sets them. [Full capture-to-burn walkthrough](https://gpuglitch.fun/#records) · [Upstream burner requirements](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/BURNER.md)
+Before glitching, identify the physical card and save a normal, locked `20c2` raw capture. The upstream capture requires the card to be already unbound from its driver, with PCI memory decoding enabled and BAR0 accessible. While the driver is still loaded, record the BDF and full GPU UUID association with `nvidia-smi --query-gpu=pci.bus_id,uuid --format=csv,noheader`. The later cold-boot comparison requires that UUID in both captures. Its `--raw` mode selects and reads physical rows, without programming. Follow the [upstream capture requirements](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/README.md#capture). From the gpuglitch checkout, prepare the pinned external source and a new private directory for this card:
 
-After a successful live preflight and manual review of the complete plan, the command that requests irreversible FF programming is:
+```sh
+git clone https://github.com/kprinssu/ga100-ff-tools.git "$HOME/ga100-ff-tools"
+git -C "$HOME/ga100-ff-tools" checkout 04573c9dbf82997fb481f26769ec58dc625d8318
+FF_TOOLS="$HOME/ga100-ff-tools"
+git -C "$FF_TOOLS" rev-parse HEAD
+git -C "$FF_TOOLS" status --short
+CARD_BDF=0000:1a:00.0  # replace with this card's full PCI address
+GPU_UUID=GPU-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  # replace with its saved UUID
+RUN_DIR=$(mktemp -d "$HOME/ga100-ff-run.XXXXXXXX")
+printf 'RUN_DIR=%s\n' "$RUN_DIR"
+```
+
+Check that the checkout is at the pinned commit, `git status --short` is empty, and the saved BDF and UUID match the physical card. Stop if the full UUID is unavailable; the post-boot comparison will not accept an identity inferred from the BDF alone. Then capture:
+
+```sh
+sudo python3 "$FF_TOOLS/capture.py3" --bdf "$CARD_BDF" --raw \
+  --gpu-uuid "$CARD_BDF=$GPU_UUID" \
+  --output "$RUN_DIR/card-raw.json"
+```
+
+Stop if capture exits nonzero or reports a partial or inconsistent result. Preserve that file and use a new run directory on retry. Only after a complete capture, transfer file ownership:
+
+```sh
+sudo chown "$(id -u):$(id -g)" "$RUN_DIR/card-raw.json"
+```
+
+Make the offline memory-only plan:
+
+```sh
+.venv/bin/ga100ctl memory-ff plan --source "$FF_TOOLS" \
+  --baseline "$RUN_DIR/card-raw.json" --output "$RUN_DIR/card-memory-plan.json"
+```
+
+Stop if the plan exits nonzero or lacks `status: logical-plan-complete`. Inspect its defect masks, FF blocks and blank append rows before running simulation:
+
+```sh
+.venv/bin/ga100ctl memory-ff simulate --source "$FF_TOOLS" \
+  --baseline "$RUN_DIR/card-raw.json" --plan "$RUN_DIR/card-memory-plan.json" \
+  --output "$RUN_DIR/card-memory-simulation.json"
+```
+
+The CLI fixes planning to the published memory-only CMP route. Both commands run offline, create new files, and print JSON summaries. Continue to the Pico campaign only with a complete capture, `logical-plan-complete`, matching simulation `plan_id` and a reviewed plan. An `incomplete` plan is saved for diagnosis and exits nonzero; it is not burn input. Keep the capture, plan and simulation out of Git. The [ga100-ff-plan agent skill](skills/ga100-ff-plan/SKILL.md) describes evidence review and stops before programming. [Detailed sequence](docs/unlocking.md#experimental-permanent-ff-route) · [Graphical walkthrough](https://gpuglitch.fun/#baseline)
+
+## Human-only permanent programming
+
+The Pico campaign does not by itself establish the burn window. Before programming, the human operator must establish and maintain the required `SENSE_CTRL`, override, security/PLM state and any qualified external programming supply. The burner checks those register values but never sets them. It has synthetic I/O tests but no published real-GPU validation. [Upstream burner requirements](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/BURNER.md)
+
+After a successful live preflight and manual review of a complete card-specific plan, only the human operator may request irreversible FF programming. In a new shell, restore `FF_TOOLS`, `CARD_BDF` and `RUN_DIR` to the verified checkout, card and saved absolute run path first:
 
 ```sh
 .venv/bin/ga100ctl memory-ff burn \
-  --source "$HOME/ga100-ff-tools" \
-  --baseline "$HOME/ga100-ff-run/card-raw.json" \
-  --plan "$HOME/ga100-ff-run/card-memory-plan.json" \
-  --bdf 0000:1a:00.0 --plan-id FULL_REVIEWED_PLAN_ID \
-  --journal "$HOME/ga100-ff-run/card-program.jsonl" --confirm-burn
+  --source "$FF_TOOLS" \
+  --baseline "$RUN_DIR/card-raw.json" \
+  --plan "$RUN_DIR/card-memory-plan.json" \
+  --bdf "$CARD_BDF" --plan-id FULL_REVIEWED_PLAN_ID \
+  --journal "$RUN_DIR/card-program.jsonl" --confirm-burn
 ```
 
-The wrapper prompts for `sudo`; the upstream burner then requires three exact interactive confirmations. It writes only the reviewed FF plan and stops on an uncertain result without retry. A successful same-session array readback still needs a cold power cycle and `memory-check` to establish usable capacity. The published FF toolkit does not supply a tested 80 GiB driver geometry profile, so this command alone is not an 80 GiB unlock. No fuse burn has been run on this project's card.
+Use the full `plan_id` from the reviewed plan, not the placeholder. The wrapper prompts for `sudo`; the upstream burner then requires three exact interactive confirmations. It stops on an uncertain result without retry. A successful same-session array readback still needs a cold-boot comparison and a separate `memory-check` to establish usable capacity. The published FF toolkit does not supply a tested 80 GiB driver geometry profile, so this command alone is not an 80 GiB unlock. No fuse burn has been run on this project's card.
+
+## Verify FF replay after a cold boot
+
+After any human-operated burn, fully remove GPU power and cold boot the same card. Before binding the NVIDIA driver, arrange the same upstream raw-capture prerequisites: the card already unbound, PCI memory decoding enabled and BAR0 accessible. Restore `FF_TOOLS`, `CARD_BDF`, `GPU_UUID` and the saved absolute `RUN_DIR` in a new shell. Confirm the same full BDF and GPU UUID as the baseline, then use a fresh private output directory for the post-boot evidence:
+
+```sh
+POST_DIR=$(mktemp -d "$HOME/ga100-ff-post.XXXXXXXX")
+printf 'POST_DIR=%s\n' "$POST_DIR"
+```
+
+Capture into a new file:
+
+```sh
+sudo python3 "$FF_TOOLS/capture.py3" --bdf "$CARD_BDF" --raw \
+  --gpu-uuid "$CARD_BDF=$GPU_UUID" --output "$POST_DIR/card-post.json"
+```
+
+Stop if the capture is incomplete; preserve the file and use a new path for another attempt. After a complete capture, make it readable:
+
+```sh
+sudo chown "$(id -u):$(id -g)" "$POST_DIR/card-post.json"
+```
+
+Compare the two files offline against the exact reviewed plan:
+
+```sh
+.venv/bin/ga100ctl memory-ff verify --source "$FF_TOOLS" \
+  --baseline "$RUN_DIR/card-raw.json" --plan "$RUN_DIR/card-memory-plan.json" \
+  --post "$POST_DIR/card-post.json"
+```
+
+The comparison checks planned FF words, unchanged other rows and memory option shadows. A successful report has `state: ff-replay-observed`; a mismatch reports `ff-replay-mismatch`. Invalid or incomplete input stops before comparison. Inspect the JSON and stop on any mismatch or identity failure. `cold_boot_verified` remains false because the file comparison cannot independently prove physical power removal. This is an offline FF-state check, not a test of working HBM. After the operator restores normal driver operation, run a separate inspection and CUDA readback test:
+
+```sh
+.venv/bin/ga100ctl gpu inspect --gpu "$CARD_BDF"
+.venv/bin/ga100ctl memory-check --gpu "$CARD_BDF"
+```
+
+Compare reported capacity and bytes actually tested with the pre-change baseline. A passing FF comparison alone does not establish 80 GiB of usable memory, and a CUDA test covers only its exercised allocation. [Full interpretation](docs/unlocking.md#post-cold-boot-verification)
 
 ## PCIe, NVLink and saved captures
 

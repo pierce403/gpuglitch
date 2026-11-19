@@ -14,6 +14,13 @@ The Pico 2 W boots the USB diagnostic image. The next bench checks are USB disco
 - [ ] Run a bounded CUDA validation on that card. Start with `--memory-mib 64 --seconds 0`. Record the bytes exercised, driver-visible capacity, SM count, PCIe link state and any unavailable checks. Preserve the event even on failure. [Validation commands](docs/benchmarking.md#verify-a-baseline)
 - [ ] With suitable cooling, run a timed stability test. Record duration, completed products, sampled temperature, power and clocks. Export the card's JSON report and check that it includes the original inspection and the validation outcomes. [Electrical safety](docs/safety.md)
 
+## Card-specific FF evidence and review
+
+- [ ] On the GPU host, save a normal locked `10de:20c2` baseline before a glitch. Record the BDF and driver-observed UUID association, then obtain two matching full 512-row passes and option/defect snapshots with the pinned FF toolkit. The driver must already be unbound and PCI memory decoding enabled for raw capture. Keep the capture private. [Capture requirements](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/README.md#capture)
+- [ ] Generate a memory-only FF plan, simulate it, and review every proposed record against the captured defect masks, observed FF/IFF boundary and blank rows. Retain the baseline, plan, simulation and hashes together; an incomplete plan is a stop condition. [Planning method](docs/unlocking.md#experimental-permanent-ff-route)
+- [ ] Independently establish and check the programming window and any required external supply. Pico `campaign` alone does not arm the controller for the FF burner. No automated arming or supply control is implemented here. [Burner prerequisites](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/BURNER.md#live-preflight)
+- [ ] If a human operator elects to program a reviewed plan, use a new journal and preserve the result without retrying an uncertain row. After a full card power cycle, obtain a fresh locked-boot raw capture and compare FF rows and memory option shadows with the reviewed plan, then verify driver-visible capacity and tested HBM readback separately. The public driver tools still lack a tested 80 GiB geometry profile. [Burn and verification boundary](docs/unlocking.md#experimental-permanent-ff-route)
+
 ## Performance comparisons
 
 - [ ] Run one local model on an idle card with either PyTorch or llama.cpp. Record the backend version, model hash, prompt and generation lengths, trial count and token rates. Retain load time and peak memory where the backend measures them. [Inference benchmarks](docs/benchmarking.md#measure-inference)

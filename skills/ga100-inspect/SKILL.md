@@ -1,6 +1,6 @@
 ---
 name: ga100-inspect
-description: Use ga100ctl to inspect a Linux GPU, check memory and links, review saved captures, and guide software or experimental FF memory planning.
+description: Use ga100ctl to inspect a Linux GPU, check driver-visible memory and links, review saved Kate captures, and verify post-boot results.
 ---
 
 Run `ga100ctl` after installation, or `python3 -m ga100ctl` from the gpuglitch checkout. Global options such as `--db PATH`, `--json`, and `--simulate` go before the subcommand.
@@ -25,11 +25,7 @@ For a CMP 170HX host with exactly one NVIDIA GPU, `ga100ctl memory-enable --sour
 
 ## Experimental FF memory planning
 
-The pinned [kprinssu/ga100-ff-tools](https://github.com/kprinssu/ga100-ff-tools/tree/04573c9dbf82997fb481f26769ec58dc625d8318) revision `04573c9dbf82997fb481f26769ec58dc625d8318` offers raw capture, per-card planning, replay simulation and an optional burner. Its [AGENTS.md](https://github.com/kprinssu/ga100-ff-tools/blob/04573c9dbf82997fb481f26769ec58dc625d8318/AGENTS.md) limits agents to capture, plan and simulate. **Never run `ga100ctl memory-ff burn`, upstream `ffburn.py3 --execute-plan`, or any live burner, and never supply or automate its confirmations.** The command may be documented for a human operator; successful offline review is not permission to program OTP.
-
-For a memory-only proposal, select an identified card and use a normal `10de:20c2` baseline with matching option snapshots and two complete, matching 512-row reads. Preserve the original file and record its BDF and GPU UUID provenance. The source's raw capture requires the driver already unbound, PCI memory decoding enabled and BAR0 accessible; do not unbind a driver or change PCI configuration as part of a routine inspection. With a pinned checkout, run its `capture.py3` only when those prerequisites are already established and the card is explicitly selected. From that checkout, use `python3 ffplan.py3 plan --baseline "$capture" --changes memory --output "$plan"`, then `python3 ffplan.py3 simulate --baseline "$capture" --plan "$plan"`. Choosing `--changes memory` avoids the default experimental Gen3 pair. Review defect-mask preservation, FF/IFF boundary evidence, blank append rows, 32-bit records, space budget, missing evidence and the simulation's logical replay. Do not treat a plan as a measured memory configuration.
-
-`ga100ctl memory-ff burn --source ../ga100-ff-tools --baseline card-a.json --plan card-a-plan.json --bdf 0000:01:00.0 --plan-id FULL_PLAN_ID --journal journals/card-a-program.jsonl --confirm-burn` is an **experimental human-run OTP request** for a reviewed public memory plan. The upstream burner requires an already armed Goldilocks window, open write privilege masks, and any qualified external programming supply. It does not establish those conditions or control the Pico. Its live identity check permits `20c2` or glitch identity `2080`, not `2082`; no real-GPU burn validation or 80 GiB driver geometry is published. Agents should stop after delivering the capture, plan, simulation, and unresolved prerequisites. After any human-reported change, record it as such and verify cold-boot capacity and readback separately.
+For a proposed permanent memory floorsweep change, switch to [ga100-ff-plan](../ga100-ff-plan/SKILL.md). That skill covers the pinned external toolkit, normal-boot raw capture, memory-only planning, simulation and evidence review. This inspection skill resumes after a human-reported cold boot: compare driver-visible capacity, verified allocation and ECC readings with the pre-change baseline. **Never run `ga100ctl memory-ff burn`, `ffburn.py3`, another live burner, or their confirmations as an agent.** A logical plan and same-session row readback do not establish working memory or 80 GiB driver geometry.
 
 ## Review a saved Kate capture
 
