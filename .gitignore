@@ -10,3 +10,4 @@ runs/
 *.sqlite3-*
 node_modules/
 .wrangler/
+/sshinfo.txt
