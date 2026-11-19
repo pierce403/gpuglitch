@@ -1,0 +1,23 @@
+{
+  "version": 4,
+  "capture_id": "00000000-0000-4000-8000-000000000001",
+  "boot_id": "00000000-0000-4000-8000-000000000002",
+  "activation_id": "00000000-0000-4000-8000-000000000003",
+  "active_generation": 1,
+  "specimen_claim": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "image_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "gpu0_bdf": "0000:01:00.0",
+  "gpu0_pci_id": 549589214,
+  "option_map_digest": "6bd9a4510729f7072b417bf79c85a2e5a8979984324da3753d2994f9efea646c",
+  "status_map_digest": "1342ed35f2ec0e44add38015717560989f97780607f759feafe49d4e95b48301",
+  "core_map_digest": "6da9cf37e2855d950ea85317eb5f28586e547c1d69e06df559e9323d8f177554",
+  "rows_first": [],
+  "rows_second": [],
+  "options_before": [],
+  "options_after": [],
+  "statuses_before": [],
+  "statuses_after": [],
+  "core_before": [],
+  "core_after": [],
+  "failure": "Synthetic example interrupted before collecting measurements"
+}

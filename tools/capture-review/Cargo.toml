@@ -1,0 +1,13 @@
+[package]
+name = "ga100-capture-review"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Review the quality of saved GA100 v4 captures"
+license = "MIT"
+publish = false
+
+[dependencies]
+glitch-contract = { git = "https://github.com/kate-land/ga100vfi", rev = "b71e3990cc652a07cdbb5c6d1192e3e8116692d2" }
+gpu0-analysis = { git = "https://github.com/kate-land/ga100vfi", rev = "b71e3990cc652a07cdbb5c6d1192e3e8116692d2" }
+serde_json = "1.0.151"

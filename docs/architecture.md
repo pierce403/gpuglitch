@@ -17,4 +17,4 @@ The dalzyu project pairs Pico SDK C firmware with Python host tools. Its purpose
 
 Hardware-independent tests precede lab acceptance. Physical acceptance requires successful UF2 enumeration, a runtime firmware identity readout, and real workloads on the selected GPU. The first observed baseline can come from a card already modified by its operator. A manual observation and a driver measurement have different evidence sources.
 
-Register-level fault injection and fuse programming are outside this implementation. No upstream research code is linked into the host CLI or diagnostic image.
+The optional `ga100-capture-review` executable links Kate's Rust capture types and analysis library. The Python CLI passes local capture paths to that executable and preserves its exit code. Hardware inventory and link status use the Linux PCI device tree and NVIDIA driver.

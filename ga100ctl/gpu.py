@@ -115,6 +115,36 @@ def nvlink_status(uuid):
         output = _smi("nvlink", "-s", "-i", uuid).strip()
         if not output:
             return {"status": "unavailable", "detail": "empty response"}
+        # A driver may return success with a header or an unsupported message.
+        statuses = re.findall(r"^\s*Link +\d+ *: *([^\r\n]*)", output, re.I | re.M)
+        unavailable = {"", "n/a", "not supported", "unsupported", "unknown"}
+        if not any(status.strip().strip("[]<>").lower() not in unavailable for status in statuses):
+            return {"status": "unavailable", "detail": output}
         return {"status": "observed", "detail": output}
     except (OSError, subprocess.SubprocessError) as exc:
         return {"status": "unavailable", "detail": str(exc)}
+
+
+def link_report(card, *, simulate=False):
+    """Present PCI link attributes and one GPU's driver-reported NVLink status."""
+    sysfs = card.get("pcie_link", {})
+    pcie = {key: sysfs.get(key) for key in (
+        "current_link_speed", "current_link_width", "max_link_speed", "max_link_width")}
+    telemetry = card.get("telemetry", {})
+    pcie["current_generation"] = telemetry.get("pcie_generation")
+    pcie["max_generation"] = telemetry.get("pcie_max_generation")
+    available = any(value and "unknown" not in str(value).lower() for value in pcie.values())
+    pcie["status"] = "observed" if available else "unavailable"
+    if simulate:
+        if available:
+            pcie["status"] = "simulated"
+        nvlink = {"status": "unavailable", "detail": "No NVLink observation in the fixture"}
+        state = "simulated"
+    else:
+        if card.get("uuid"):
+            nvlink = nvlink_status(card["uuid"])
+        else:
+            nvlink = {"status": "unavailable", "detail": card.get("driver_warning") or "No driver UUID"}
+        state = "observed" if available or nvlink["status"] == "observed" else "unavailable"
+    return {"state": state, "bdf": card["bdf"], "uuid": card.get("uuid"),
+            "driver": card.get("driver"), "pcie": pcie, "nvlink": nvlink}

@@ -24,7 +24,22 @@ ga100ctl pico list
 ga100ctl gpu list
 ```
 
-Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. On an offline host, use the checkout directly or install a previously built wheel with `python -m pip install --no-index dist/ga100ctl-0.1.0-py3-none-any.whl`.
+Discovery works with a stock Linux kernel even if the NVIDIA driver is absent. It reads the Linux USB and PCI device trees and queries `nvidia-smi` when GPUs are present. All commands are also available through `python3 -m ga100ctl` from the checkout. For an offline host, use the checkout directly or install a prebuilt wheel with `python -m pip install --no-index dist/ga100ctl-0.2.0-py3-none-any.whl`.
+
+## PCIe, NVLink and saved captures
+
+Run `ga100ctl gpu list` to find the card's PCI address. Use that address for `ga100ctl gpu links --gpu 0000:41:00.0` to see negotiated and maximum PCIe speed and width, plus NVLink status from the driver. Missing readings appear as unavailable. This command works without elevated privileges.
+
+To review an existing Kate GA100 capture, install the Rust companion once alongside the CLI. From the checkout, with the Python virtual environment above active and Rust 1.97 or later installed, run these commands. The included file is a synthetic partial capture.
+
+```sh
+cargo install --locked --path tools/capture-review --root "$VIRTUAL_ENV"
+ga100ctl capture review tools/capture-review/examples/partial.json
+```
+
+For a comparison, run `ga100ctl capture review current.json --baseline earlier.json` with two saved Kate version 4 captures. The JSON result gives the capture identity, the number of observations from each pass, and Kate's assessment of stability and changes. An incomplete capture is a valid input and can return a successful exit code. The review runs offline.
+
+The [capture reviewer](tools/capture-review/) uses Kate's original Rust libraries at a pinned revision. The [ga100-inspect agent skill](skills/ga100-inspect/SKILL.md) documents device selection, capture comparison and evidence reporting for agents working in this checkout.
 
 ## Record a card
 

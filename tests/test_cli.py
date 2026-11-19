@@ -51,6 +51,32 @@ class CliTests(unittest.TestCase):
         self.assertEqual(result["measurements"]["telemetry.memory_total_mib"], [8192, 10240])
         self.assertEqual(self.invoke("report", simulate=False)["events"], [])
 
+    @mock.patch("ga100ctl.gpu.discover", side_effect=AssertionError("live device access"))
+    @mock.patch("ga100ctl.gpu._smi", side_effect=AssertionError("live driver access"))
+    def test_simulated_links_require_selected_card(self, _smi, _discover):
+        self.assertIn("Multiple GPUs", self.invoke("gpu", "links", code=2))
+        result = self.invoke("gpu", "links", "--gpu", "0000:41:00.0")
+        self.assertEqual(result["state"], "simulated")
+        self.assertEqual(result["pcie"]["current_link_width"], "4")
+        self.assertEqual(result["nvlink"]["status"], "unavailable")
+        self.assertFalse(self.db.exists())
+
+    @mock.patch("ga100ctl.gpu.discover")
+    @mock.patch("ga100ctl.gpu._smi")
+    def test_live_links_distinguish_unavailable_and_inactive(self, smi, discover):
+        card = {"bdf": "0000:41:00.0", "uuid": "GPU-TEST", "pcie_link": {}}
+        discover.return_value = [card]
+        smi.return_value = "GPU 0: Example GPU\n  Link 0: [Not Supported]\n"
+        absent = self.invoke("gpu", "links", "--gpu", card["bdf"], simulate=False, code=1)
+        self.assertEqual(absent["state"], "unavailable")
+        smi.assert_called_once_with("nvlink", "-s", "-i", card["uuid"])
+        smi.return_value = "GPU 0: Example GPU\n  Link 0: <inactive>\n"
+        inactive = self.invoke("gpu", "links", "--gpu", card["uuid"], simulate=False)
+        self.assertEqual(inactive["nvlink"]["status"], "observed")
+        self.assertIn("<inactive>", inactive["nvlink"]["detail"])
+        self.assertEqual(inactive["pcie"]["status"], "unavailable")
+        self.assertFalse(self.db.exists())
+
     @mock.patch("ga100ctl.cli.workloads.validate", side_effect=AssertionError("live workload"))
     def test_simulated_workload_journal(self, _):
         result = self.invoke("validate", "--gpu", "0000:41:00.0")

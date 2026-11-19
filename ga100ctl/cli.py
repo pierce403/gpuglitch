@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import sysconfig
 from contextlib import closing
 from functools import partial
 from importlib.resources import files
@@ -22,6 +23,11 @@ def parser():
     root.add_argument("--simulate", action="store_true", help="use the bundled offline fixture")
     root.add_argument("--json", action="store_true", help="print structured JSON")
     commands = root.add_subparsers(dest="command", required=True)
+    captures = commands.add_parser("capture", help="work with saved GA100 captures")
+    capture_commands = captures.add_subparsers(dest="action", required=True)
+    review = capture_commands.add_parser("review", help="check the quality of a saved capture offline")
+    review.add_argument("file", type=Path, help="path to a saved capture JSON file")
+    review.add_argument("--baseline", type=Path, help="compare with an earlier capture of the same device")
     commands.add_parser("doctor", help="inspect hardware and available host tools")
     pico_cmd = commands.add_parser("pico").add_subparsers(dest="action", required=True)
     pico_cmd.add_parser("list", help="discover USB devices")
@@ -40,6 +46,8 @@ def parser():
     inspect = gpu_cmd.add_parser("inspect", help="record a baseline or subsequent observation")
     inspect.add_argument("--gpu", help="full PCI address or UUID (optional with exactly one device)")
     inspect.add_argument("--asset-tag", help="unique operator-assigned physical card label")
+    links = gpu_cmd.add_parser("links", help="show current PCIe and NVLink status for one GPU")
+    links.add_argument("--gpu", help="full PCI address or UUID (optional with exactly one device)")
     validate = commands.add_parser("validate", help="exercise a bounded allocation and optionally run compute")
     validate.add_argument("--gpu", required=True)
     validate.add_argument("--memory-mib", type=int, default=64)
@@ -186,6 +194,8 @@ def execute(args):
                 "host_tools": {name: shutil.which(name) for name in names} if not args.simulate else {}}
     if cmd in ("gpu", "pico") and args.action == "list":
         return {"source": scope, cmd + "s": gpus() if cmd == "gpu" else picos()}
+    if cmd == "gpu" and args.action == "links":
+        return {"source": scope, **gpu.link_report(select(gpus(), args.gpu), simulate=args.simulate)}
     if cmd == "pico" and args.simulate:
         raise ValueError("The USB fixture supports discovery. Provisioning uses real build artifacts.")
     if cmd == "pico" and args.action == "flash" and not args.confirm:
@@ -248,6 +258,21 @@ def show_report(data):
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == "capture":
+            if args.simulate:
+                raise ValueError("capture review reads the file you supply. Omit --simulate.")
+            companion = shutil.which("ga100-capture-review", path=sysconfig.get_path("scripts"))
+            companion = companion or shutil.which("ga100-capture-review")
+            if not companion:
+                raise ValueError(
+                    "Install the capture reader from the gpuglitch checkout with "
+                    "cargo install --locked --path tools/capture-review and add Cargo's bin directory to PATH."
+                )
+            command = [companion, str(args.file.absolute())]
+            if args.baseline is not None:
+                command.extend(["--baseline", str(args.baseline.absolute())])
+            result = subprocess.run(command, check=False)
+            return result.returncode if result.returncode >= 0 else 128 - result.returncode
         data = execute(args)
         if args.command == "report" and not args.json:
             show_report(data)
